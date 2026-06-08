@@ -1,0 +1,10 @@
+/target
+
+# local secrets
+.env
+
+# 消息记录插件下载的图片(本地归档,不入库)
+/data
+
+# 本地 agent / 工具目录
+/.claude

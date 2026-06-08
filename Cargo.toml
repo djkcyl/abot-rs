@@ -1,0 +1,23 @@
+[package]
+name = "abot"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/djkcyl/abot-rs"
+description = "用 nagisa 搭的多插件 QQ 机器人"
+
+[dependencies]
+anyhow = "1.0.102"
+chrono = "0.4.45"
+dotenvy = "0.15.7"
+image = { version = "0.25.5", default-features = false, features = ["png", "gif"] }
+md5 = "0.7.0"
+nagisa = { version = "0.2", default-features = false, features = ["log", "onebot"] }
+rand = "0.10.1"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls"] }
+sea-orm = { version = "1.1.20", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono", "with-json"] }
+sea-orm-migration = { version = "1.1.20", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+serde_json = "1.0.150"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
