@@ -91,7 +91,11 @@ fn cooldown_msg(remain_min: i64, interval_min: i64, level: i64) -> String {
 }
 
 /// `画板` —— 无参看全图;`画板 x,y` 看放大窗;`画板 净` 出干净分享图。
-#[command("画板")]
+#[command("画板",
+    order = 1,
+    description = "看公共像素画板",
+    usage = "发送「画板」看全图，「画板 x,y」以该点为心看局部放大窗（每格更大、带坐标刻度和准星），\
+「画板 净」出一张无网格无刻度的干净分享图（带日期水印）。画布 256×144 格、32 色，所有群共用同一块。")]
 async fn place_view(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
     let rest = args.0.trim();
     let png = if rest.is_empty() {
@@ -116,7 +120,10 @@ async fn place_view(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
 }
 
 /// `画板色板` —— 32 色编号块图 + 文字图例。
-#[command("画板色板")]
+#[command("画板色板",
+    order = 3,
+    description = "看画板的 32 色调色板",
+    usage = "发送「画板色板」，出一张 32 色的编号块图和文字图例。作画时按编号或颜色名选色。")]
 async fn palette(reply: Reply) -> HandlerResult {
     match render::render_palette() {
         Ok(bytes) => reply.msg().image_bytes(bytes).text(colors::legend()).send().await?,
@@ -126,7 +133,11 @@ async fn palette(reply: Reply) -> HandlerResult {
 }
 
 /// `画板回放` —— 把画布历程做成 GIF。可选:最近 N 天(`画板回放 7天`/`7d`)、`step=N`、`帧=N`。
-#[command("画板回放")]
+#[command("画板回放",
+    order = 5,
+    description = "把画板从空白逐笔重演成 GIF",
+    usage = "发送「画板回放」，按时间顺序把画板从空白逐笔重演成 GIF。可加「7天」/「7d」只回放最近几天，\
+「帧=N」指定总帧数（2-60），「step=N」指定每帧合并几次落格，不填则按落格总量自动取。")]
 async fn replay_cmd(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
     match replay::render_replay(&db, parse_replay_args(args.0.trim())).await? {
         Some(gif) => reply.msg().image_bytes(gif).send().await?,
@@ -170,7 +181,11 @@ fn parse_days(low: &str) -> Option<i64> {
 /// **非超管**只能查**自己的**记录(任何过滤参数都忽略,也查不了别人)。一律**合并转发**:同一人多笔
 /// 用**嵌套合并转发**收拢,每条消息合并多笔(≤3000 字),顶层最多 100 子消息(嵌套转发算 1)。
 /// 每笔带**绘制序号 #id**。
-#[command("画板历史")]
+#[command("画板历史",
+    order = 4,
+    description = "看自己在画板上的落格记录",
+    usage = "发送「画板历史」，以合并转发列出自己每一笔落格（带绘制序号、坐标、颜色、时间）。\
+超管还可加「x,y」查某格被谁画过、加「@某人」或 QQ 号查某人的落格，普通人只能看自己的。")]
 async fn history(
     reply: Reply,
     Db(db): Db,
@@ -228,36 +243,6 @@ fn fmt_record(r: &entity::history::Model) -> String {
     )
 }
 
-/// 把多行记录打包成 ≤3000 字的若干文本节点(署名 `user`)。
-fn pack_lines(user: Uin, lines: &[String]) -> Vec<ForwardNode> {
-    const MAX_CHARS: usize = 3000;
-    let mut nodes = Vec::new();
-    let mut buf = String::new();
-    let mut len = 0usize;
-    for line in lines {
-        let ll = line.chars().count();
-        if !buf.is_empty() && len + 1 + ll > MAX_CHARS {
-            nodes.push(text_node(user, std::mem::take(&mut buf)));
-            len = 0;
-        }
-        if !buf.is_empty() {
-            buf.push('\n');
-            len += 1;
-        }
-        buf.push_str(line);
-        len += ll;
-    }
-    if !buf.is_empty() {
-        nodes.push(text_node(user, buf));
-    }
-    nodes
-}
-
-/// 纯文本转发节点(署名 `user`,name 取其 QQ 号)。
-fn text_node(user: Uin, text: String) -> ForwardNode {
-    ForwardNode::text(user, user.0.to_string(), text)
-}
-
 /// 把历史按人分组 → 顶层合并转发:概述 + 每人一节(多笔嵌套合并转发、一笔单节点),
 /// 顶层最多 100 子消息(含概述,嵌套转发算 1),超出的人截断并在概述里注明。
 fn history_segments(me: Uin, header: &str, rows: &[entity::history::Model]) -> Vec<Segment> {
@@ -290,10 +275,11 @@ fn history_segments(me: Uin, header: &str, rows: &[entity::history::Model]) -> V
         let content = if recs.len() == 1 {
             vec![Segment::text(fmt_record(recs[0]))]
         } else {
-            // 同一人多笔 → 嵌套合并转发(内部消息各 ≤3000 字)。
+            // 同一人多笔 → 嵌套合并转发：按「一笔记录」为单位切节点(chunk_items,不把一笔拆到两节点)。
             let lines: Vec<String> = recs.iter().map(|&r| fmt_record(r)).collect();
             let title = format!("{uin} · {} 笔", recs.len());
-            vec![Segment::Forward(Forward::nodes(pack_lines(user, &lines)).title(title))]
+            let nodes = ForwardNode::chunk_items(user, user.0.to_string(), lines, "\n", 3000);
+            vec![Segment::Forward(Forward::nodes(nodes).title(title))]
         };
         top.push(ForwardNode::new(user, uin.to_string(), content).at_time(recs[0].at.timestamp()));
     }
@@ -303,7 +289,12 @@ fn history_segments(me: Uin, header: &str, rows: &[entity::history::Model]) -> V
 
 /// `画板作画` —— 快捷 `x,y 颜色` 一步落格;否则进区块导航引导(`#N` 选块 / `x,y` 指定点 / 空→总览选块)。
 /// 同人并发经 `single_flight` 串行(防双击)。
-#[command("画板作画")]
+#[command("画板作画",
+    order = 2,
+    description = "在公共画板上落一个格子",
+    usage = "发送「画板作画 x,y 颜色」一步落格，坐标如 100,72（x 0-255、y 0-143），颜色取调色板编号或颜色名；\
+也可只发「画板作画」按区块导航一步步选位选色，或「画板作画 #N」先进某区块。每落一格按累计落格量缓涨地扣币（1 起、封顶 20）、\
+加 2 经验，并进入冷却（2 小时起，等级越高越短、最低 15 分钟）。")]
 async fn draw(reply: Reply, user: AUser, session: Session, args: ArgText) -> HandlerResult {
     // user 已持同一份连接（内部 Arc）；直接借用,不再单取 Db。
     let db = user.db();

@@ -23,6 +23,10 @@ pub struct Model {
     pub seq: i64,
     /// 原始消息内容（wire 段数组，JSONB，**未**渲染成展示文本——保留结构、之后再渲）。
     pub content: Json,
+    /// 这条是不是 bot 自己发出去的（出站）。收到的为 false，bot 发的为 true。
+    pub from_self: bool,
+    /// 私聊对端 QQ 号（构成双向会话的「另一方」）：入站为发送者、出站为目标；群消息为 `None`。
+    pub private_peer: Option<i64>,
     /// 入库时间（库侧 `now()`）。
     pub time: DateTimeWithTimeZone,
 }

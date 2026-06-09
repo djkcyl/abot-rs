@@ -34,17 +34,20 @@ const DAILY_LIMIT: i64 = 200;
 struct TransferArgs {
     /// 收款人:群里 @ 对方,私聊里直接输 QQ 号(`#[arg(at_or_id)]` 两种皆可)。@ 不占文本词,故
     /// 后面的 `amount` 始终对齐。
-    #[arg(at_or_id)]
+    #[arg(at_or_id, name = "对方", desc = "收款人：群里 @ 对方，私聊输 QQ 号")]
     target: Option<Uin>,
     /// `--all` / `-a`：转出当前全部余额(与数额二选一)。
-    #[arg(flag, short = 'a')]
+    #[arg(flag, short = 'a', desc = "转出全部余额")]
     all: bool,
     /// 转账数额(文本位置参数)。可为负——触发负数惩罚彩蛋。
+    #[arg(name = "金额", desc = "要转出的金额（不与 -a 同用）")]
     amount: Option<i64>,
 }
 
 /// `转账` / `transfer` → 给 @目标转游戏币。参数都可选,命令总能进来,缺啥在这里解释。
-#[command("转账", "transfer")]
+#[command("转账", "transfer",
+    description = "把游戏币转给别人",
+    usage = "每业务日有转出上限，凌晨 4 点刷新。")]
 async fn transfer(
     reply: Reply,
     mut user: AUser,

@@ -5,7 +5,14 @@
 
 pub mod config;
 pub mod data;
+
+/// crate 级内容审核器:腾讯云 AI 主、本地关键词/二维码兜底(详见 `moderation::ContentModerator`)。
+pub mod moderation;
+
 pub mod plugins;
+
+/// 插件 WebUI 地基:进程内 axum 控制台(详见 `web::ConsoleService`)。
+pub mod web;
 
 /// 游戏货币名 —— **整个 abot 的全局设计常量**，单一来源。
 ///

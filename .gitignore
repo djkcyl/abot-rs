@@ -8,3 +8,14 @@
 
 # 本地 agent / 工具目录
 /.claude
+
+# 前端依赖与构建产物
+/web/node_modules
+/web/dist/*
+!/web/dist/.gitkeep
+
+# playwright MCP 截图/快照产物
+/.playwright-mcp
+
+# 规划/设计草稿(agent 工作产物,不入库)
+/docs

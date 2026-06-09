@@ -18,7 +18,7 @@ mod media;
 mod profile;
 
 use nagisa::prelude::*;
-use sea_orm::{ActiveModelTrait, ActiveValue::NotSet, Set};
+use sea_orm::{ActiveModelTrait, ActiveValue::NotSet, DatabaseConnection, Set};
 use serde_json::Value;
 
 use crate::data::Db;
@@ -45,9 +45,11 @@ async fn record(m: MessageEvent, Db(db): Db) -> HandlerResult {
         return Ok(()); // 只记收到的消息,不记 bot 自己发的
     }
 
-    // 落一行消息记录。content = 原始 wire 段数组(未渲染)；群号私聊为 None。
+    // 落一行消息记录。content = 原始 wire 段数组(未渲染)；群号私聊为 None；
+    // 私聊对端 = 发送者（入站方向）；from_self 恒 false（上面已挡掉 bot 自己发的）。
     let content = m.raw.get("message").cloned().unwrap_or_else(|| Value::Array(Vec::new()));
     let group_id = m.peer.is_group().then_some(m.peer.id.0);
+    let private_peer = (!m.peer.is_group()).then_some(m.sender.0);
     let row = chat_log::ActiveModel {
         id: NotSet,
         uin: Set(m.sender.0),
@@ -55,6 +57,8 @@ async fn record(m: MessageEvent, Db(db): Db) -> HandlerResult {
         onebot_id: Set(m.id.onebot_id.map(|v| v as i64)),
         seq: Set(m.id.seq),
         content: Set(content),
+        from_self: Set(false),
+        private_peer: Set(private_peer),
         time: NotSet,
     };
     if let Err(e) = row.insert(&db).await {
@@ -67,4 +71,35 @@ async fn record(m: MessageEvent, Db(db): Db) -> HandlerResult {
         tokio::spawn(async move { media::archive(jobs).await });
     }
     Ok(())
+}
+
+/// bot 自己发出的一条消息落 `chat_log`（出站方向，凑成双向会话历史）。由 `main` 装的出站
+/// 日志器在 `bot.send` 成功后调用。`content` 用 OneBot wire 段数组（与入站同形,前端同款渲染）；
+/// 私聊对端 = 发送目标；`from_self = true`、`uin = self_id`。落库失败只 warn。
+pub async fn record_outgoing(
+    db: &DatabaseConnection,
+    peer: &Peer,
+    segments: &[Segment],
+    self_id: Uin,
+    msg_id: &MessageId,
+) {
+    // 段 → OneBot wire 段数组（{type,data} 列表）：复用框架的 OneBot 编码器,与入站存的同形。
+    let wire = nagisa::nagisa_onebot::encode_segments(segments);
+    let content = serde_json::to_value(&wire).unwrap_or_else(|_| Value::Array(Vec::new()));
+    let group_id = peer.is_group().then_some(peer.id.0);
+    let private_peer = (!peer.is_group()).then_some(peer.id.0);
+    let row = chat_log::ActiveModel {
+        id: NotSet,
+        uin: Set(self_id.0),
+        group_id: Set(group_id),
+        onebot_id: Set(msg_id.onebot_id.map(|v| v as i64)),
+        seq: Set(msg_id.seq),
+        content: Set(content),
+        from_self: Set(true),
+        private_peer: Set(private_peer),
+        time: NotSet,
+    };
+    if let Err(e) = row.insert(db).await {
+        tracing::warn!(error = %e, "写出站消息记录失败");
+    }
 }

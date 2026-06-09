@@ -54,7 +54,9 @@ fn greeting() -> &'static str {
 ///
 // TODO: 原 ABot 把签到结果经 text2image 渲染成图片再发；待 abot 有渲染模块后改回发图，
 // 这里暂以纯文本发送。
-#[command("签到", "sign")]
+#[command("签到", "sign",
+    description = "每日签到领奖励",
+    usage = "发送「签到」每天签一次，凌晨 4 点刷新；连续签到天数越多奖励越高，签到发金币和经验，连签满 7／30／100 天另有里程碑奖励。")]
 async fn sign(reply: Reply, mut user: AUser) -> HandlerResult {
     // user 已持同一份连接（内部 Arc，克隆廉价）；克隆出来避免与 &mut user 借用冲突。
     let db = user.db().clone();

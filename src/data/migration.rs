@@ -36,13 +36,14 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        // 核心迁移在前（建共享表），随后追加每个插件自注册的迁移。插件迁移各带带日期序号
-        // 的唯一名（晚于核心序号），故排序稳定：核心先跑、插件后跑。
+        // 核心迁移在前（建共享表），随后追加每个插件自注册的迁移。inventory 收集顺序不保证,
+        // 故插件迁移按其带日期序号的唯一名排序——同一插件先建表后改表的相对次序才稳定。
+        let mut plugins: Vec<Box<dyn MigrationTrait>> =
+            nagisa::inventory::iter::<PluginMigration>.into_iter().map(|p| (p.0)()).collect();
+        plugins.sort_by(|a, b| a.name().cmp(b.name()));
         let mut all: Vec<Box<dyn MigrationTrait>> =
             vec![Box::new(m20250101_000001_create_tables::Migration)];
-        for plugin in nagisa::inventory::iter::<PluginMigration> {
-            all.push((plugin.0)());
-        }
+        all.extend(plugins);
         all
     }
 }

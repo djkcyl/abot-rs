@@ -11,6 +11,7 @@
 //!
 //! `main` 对 `plugins::*` 的 glob-use 保活整棵模块树,触发器 / 插件方得自动收录。
 
+pub mod bottle;
 pub mod chatlog;
 pub mod help;
 pub mod mydata;

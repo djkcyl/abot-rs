@@ -17,7 +17,9 @@ plugin! {
 }
 
 /// `个人数据` / `我的` / `资料` → 汇总展示发送者的数据(核心字段 + 各插件贡献行)。
-#[command("个人数据", "我的数据", "我的", "资料", "mydata")]
+#[command("个人数据", "我的数据", "我的", "资料", "mydata",
+    description = "查看自己的数据",
+    usage = "发送「个人数据」（或「我的」「资料」）查看金币、经验、等级，以及签到、发言等各功能的累计数据，赛马等游戏战绩另起一段显示。")]
 async fn mydata(reply: Reply, user: AUser) -> HandlerResult {
     let info = user.level_info();
     let name = user.model.nickname.clone().unwrap_or_else(|| user.uin().to_string());
