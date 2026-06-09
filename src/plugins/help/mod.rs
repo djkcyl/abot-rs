@@ -17,8 +17,6 @@ plugin! {
     key = "help",
     name = "帮助",
     category = Tool,
-    description = "查看命令菜单与用法",
-    usage = "发送「help」/「帮助」/「菜单」看全部功能;「help 功能名」看某个功能的详细命令。",
 }
 
 /// 分类的展示顺序 + 中文名(注册表里没有的分类自动跳过)。
@@ -93,11 +91,27 @@ fn effective_key(p: &PluginMeta) -> &str {
     }
 }
 
+/// 插件在总览/详情头部用的简介:有 `plugin.description` 就用它;没有(单命令插件不写插件级描述)则
+/// 取它**唯一**一条非隐藏命令的描述兜底——元数据只写在命令上、不和插件级重复。
+fn plugin_desc<'a>(p: &'a PluginMeta, triggers: &'a [TriggerMeta]) -> &'a str {
+    if !p.description.is_empty() {
+        return p.description;
+    }
+    let key = effective_key(p);
+    let mut it = triggers
+        .iter()
+        .filter(|t| matches!(t.kind, TriggerKind::Command) && !t.hidden && t.plugin_key == key);
+    match (it.next(), it.next()) {
+        (Some(only), None) => only.description, // 恰好一条命令 → 用它的描述
+        _ => "",
+    }
+}
+
 /// 总览正文:按 [`CATEGORY_ORDER`] 分组,每个非隐藏插件一行「名字 —— 简介」,组内按名字排序;末尾给提示。
-/// 被整体停用的插件名后标「（已停用）」。
+/// 简介经 [`plugin_desc`] 兜底(单命令插件取那条命令的描述);被整体停用的插件名后标「（已停用）」。
 pub(crate) fn render_overview(
     plugins: &[PluginMeta],
-    _triggers: &[TriggerMeta],
+    triggers: &[TriggerMeta],
     enabled: &EnabledSet,
     peer: Option<Peer>,
 ) -> String {
@@ -112,10 +126,11 @@ pub(crate) fn render_overview(
         let mut lines = vec![format!("【{label}】")];
         for p in ps {
             let name = name_with_off(p.name, plugin_off(p, enabled, peer));
-            if p.description.is_empty() {
+            let desc = plugin_desc(p, triggers);
+            if desc.is_empty() {
                 lines.push(name);
             } else {
-                lines.push(format!("{name} —— {}", p.description));
+                lines.push(format!("{name} —— {desc}"));
             }
         }
         sections.push(lines.join("\n"));
@@ -334,6 +349,7 @@ fn param_line(a: &ArgSpec) -> String {
         format!("{head}：{}", a.desc)
     }
 }
+
 
 
 

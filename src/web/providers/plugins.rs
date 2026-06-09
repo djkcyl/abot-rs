@@ -73,13 +73,28 @@ fn plugin_json(p: &PluginMeta, triggers: &[TriggerMeta], enabled: &EnabledSet) -
         "key": p.key,
         "name": p.name,
         "category": format!("{:?}", p.category),
-        "description": p.description,
-        "usage": p.usage,
+        "description": plugin_desc(p, triggers),
         "hidden": p.hidden,
         "enabled": enabled.is_enabled(p.key, p.default_enable, None),
         "can_disable": p.can_disable,
         "commands": commands_json(effective_key(p), triggers, enabled),
     })
+}
+
+/// 插件简介:有 `plugin.description` 用之;没有(单命令插件不写插件级描述)则取那唯一一条
+/// 非隐藏命令的描述兜底——和 help 同口径,元数据只写在命令上、不和插件级重复。
+fn plugin_desc<'a>(p: &'a PluginMeta, triggers: &'a [TriggerMeta]) -> &'a str {
+    if !p.description.is_empty() {
+        return p.description;
+    }
+    let key = effective_key(p);
+    let mut it = triggers
+        .iter()
+        .filter(|t| matches!(t.kind, TriggerKind::Command) && !t.hidden && t.plugin_key == key);
+    match (it.next(), it.next()) {
+        (Some(only), None) => only.description,
+        _ => "",
+    }
 }
 
 /// 某插件名下的命令清单:只取命令型触发器(过滤掉事件型),每条带自身子开关的当前状态。

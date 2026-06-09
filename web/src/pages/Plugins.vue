@@ -43,7 +43,6 @@ interface Plugin {
   name: string
   category: string
   description: string
-  usage: string
   hidden: boolean
   enabled: boolean
   can_disable: boolean
@@ -230,11 +229,6 @@ const columns: DataTableColumns<Plugin> = [
   {
     title: '描述',
     key: 'description',
-    ellipsis: { tooltip: true },
-  },
-  {
-    title: '用法',
-    key: 'usage',
     ellipsis: { tooltip: true },
   },
   {

@@ -22,8 +22,6 @@ plugin! {
     key = "transfer",
     name = "转账",
     category = Fun,
-    description = "转账游戏币给他人",
-    usage = "转账 @某人 <金额>，或「转账 @某人 --all」转出全部。每天有转账上限。",
 }
 
 /// 每日转出上限(老 abot 口径)。今日已转额从 `coin_log` 派生。

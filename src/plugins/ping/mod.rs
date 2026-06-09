@@ -10,8 +10,6 @@ plugin! {
     key = "ping",
     name = "存活探针",
     category = Tool,
-    description = "测试机器人是否在线",
-    usage = "发送「ping」，机器人在线会回复「pong」。",
     can_disable = false,
 }
 

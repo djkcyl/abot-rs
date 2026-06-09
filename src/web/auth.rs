@@ -182,6 +182,4 @@ plugin! {
     key = "webconsole",
     name = "网页控制台",
     category = Tool,
-    description = "网页控制台:私聊「登录 <验证码>」绑定网页会话",
-    usage = "在网页打开控制台取验证码,私聊机器人发送「登录 <验证码>」即可登录。",
 }
