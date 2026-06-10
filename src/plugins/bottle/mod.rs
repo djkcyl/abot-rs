@@ -267,6 +267,13 @@ async fn fish(reply: Reply, mut user: AUser, bot: Bot) -> HandlerResult {
 
     logic::record_pickup(&db, bottle.id).await.context("记录打捞")?;
     let forward = render::bottle_forward(&db, &bottle, bot.self_id()).await.context("渲染漂流瓶")?;
+    // 先回一句打捞成功(群里 @ 捞的人),合并转发紧随其后——光秃秃一张转发卡不知道发生了什么。
+    let hail = format!("成功捞起一只漂流瓶,编号 {}", bottle.id);
+    if reply.peer().is_group() {
+        reply.msg().at(user.uin()).text(format!(" {hail}")).send().await?;
+    } else {
+        reply.reply(hail).await?;
+    }
     let sent = reply.send(&[forward]).await?;
     remember_sent(&db, &sent, bottle.id).await;
     Ok(())
@@ -534,7 +541,7 @@ fn fmt_list_line(b: &entity::bottle::Model, score: Option<f64>) -> String {
     let mut line = format!(
         "#{} {} · 被捞 {}(剩 {}) · 评分 {} · {}",
         b.id,
-        b.created_at.format("%m-%d %H:%M"),
+        render::local_time(&b.created_at).format("%m-%d %H:%M"),
         b.total_pickups,
         remaining,
         score_text,
@@ -549,6 +556,9 @@ fn fmt_list_line(b: &entity::bottle::Model, score: Option<f64>) -> String {
 /// 把 [`MessageId`] 规整成跨协议稳定的查询键：OneBot 取 `onebot_id`、Milky 取 `seq`，均带
 /// 会话寻址。同协议下「发送返回的 id」与「回复段解出的 id」据此落到同一个键上（OneBot 两侧
 /// 都是 `seq=0 + onebot_id`,Milky 两侧都是 `(peer, seq)`）。两者都缺（异常形态）返 `None`。
+///
+/// **已知未解**:私聊里回复合并转发,收到的 reply 段 id 是 0(群里正常),疑似框架解码或
+/// Lagrange 侧问题,待查——先不在这层绕。
 fn msg_key(id: &MessageId) -> Option<String> {
     let scene = match id.peer.scene {
         Scene::Friend => "f",

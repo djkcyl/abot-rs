@@ -28,6 +28,8 @@ pub struct Model {
     pub claimed_ext: Option<String>,
     /// 实际格式(下载字节魔数嗅探:png/jpeg/gif/webp/bmp;认不出为 `None`)。
     pub format: Option<String>,
+    /// 是否动图(下载/自愈时经 [`super::is_animated_image`] 嗅探;未嗅探过为 `None`)。
+    pub animated: Option<bool>,
     /// 遇见次数(每次 ingest 命中 +1)。
     pub seen_count: i64,
     /// 首次遇见(库侧 `now()`)。

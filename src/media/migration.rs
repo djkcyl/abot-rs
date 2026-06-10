@@ -21,6 +21,7 @@ enum MediaFile {
     Size,
     ClaimedExt,
     Format,
+    Animated,
     SeenCount,
     CreatedAt,
     LastSeen,
@@ -59,6 +60,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(MediaFile::Size).big_integer().null())
                     .col(ColumnDef::new(MediaFile::ClaimedExt).string().null())
                     .col(ColumnDef::new(MediaFile::Format).string().null())
+                    .col(ColumnDef::new(MediaFile::Animated).boolean().null())
                     .col(ColumnDef::new(MediaFile::SeenCount).big_integer().not_null().default(1))
                     .col(
                         ColumnDef::new(MediaFile::CreatedAt)

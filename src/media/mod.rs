@@ -197,9 +197,15 @@ pub async fn ingest(refs: Vec<MediaRef>) -> Vec<String> {
         if r.md5.is_some()
             && let Some(path) = locate(&ticket)
         {
-            let (format, size) = sniff_disk(&path).await;
-            record_seen(&svc.db, &ticket, &r.url, r.claimed_ext.as_deref(), Init::Done { format, size })
-                .await;
+            let (format, size, animated) = sniff_disk(&path).await;
+            record_seen(
+                &svc.db,
+                &ticket,
+                &r.url,
+                r.claimed_ext.as_deref(),
+                Init::Done { format, size, animated },
+            )
+            .await;
             continue;
         }
 
@@ -237,6 +243,17 @@ pub async fn wait(ticket: &str, timeout: Duration) -> anyhow::Result<Stored> {
     };
     tokio::spawn(touch_used(stored.md5.clone()));
     Ok(stored)
+}
+
+/// 查一份图入库时嗅探的动图标志:`Some(true/false)` = 嗅探过;`None` = 无记录或未嗅探
+/// (老行/查询失败),调用方手上有字节时可用 [`is_animated_image`] 兜底。
+pub async fn animated_flag(md5: &str) -> Option<bool> {
+    media_file::Entity::find_by_id(md5.to_owned())
+        .one(&service().db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|m| m.animated)
 }
 
 /// 刷新一份图的 `last_used`(取用即「使用」:wait 取到 / 重发 / WebUI 取图)。
@@ -305,8 +322,8 @@ async fn dispatch(mut rx: mpsc::UnboundedReceiver<Job>) {
 async fn process(job: Job) {
     let svc = service();
     let outcome = match download(&job).await {
-        Ok((stored, size, format)) => {
-            finish_db(&svc.db, &job.ticket, &stored, &job.url, size, format).await;
+        Ok((stored, size, format, animated)) => {
+            finish_db(&svc.db, &job.ticket, &stored, &job.url, size, format, animated).await;
             Ok(stored)
         }
         Err(e) => {
@@ -325,8 +342,9 @@ async fn process(job: Job) {
 /// 下载一张并落盘(分片目录,临时名写入 + 原子改名:盘上出现正式名即内容完整)。
 ///
 /// 落盘名一律 `md5(bytes)`(无后缀):wire 提示只参与下载前去重,提示与字节不符记 warn、
-/// 按真值归档(登记行随之改名)。返回(落盘结果, 字节数, 嗅探格式)。已存在跳过写盘(去重)。
-async fn download(job: &Job) -> anyhow::Result<(Stored, i64, Option<String>)> {
+/// 按真值归档(登记行随之改名)。返回(落盘结果, 字节数, 嗅探格式, 是否动图)。
+/// 已存在跳过写盘(去重)。
+async fn download(job: &Job) -> anyhow::Result<(Stored, i64, Option<String>, bool)> {
     let resp = client().get(&job.url).send().await?.error_for_status()?;
     let bytes = resp.bytes().await?;
     let digest = format!("{:x}", md5::compute(&bytes));
@@ -336,6 +354,7 @@ async fn download(job: &Job) -> anyhow::Result<(Stored, i64, Option<String>)> {
         tracing::warn!(url = %job.url, %claimed, actual = %digest, "wire 文件名与内容 md5 不符,按真值归档");
     }
     let format = format_tag(&bytes);
+    let animated = is_animated_image(&bytes);
     let path = shard_path(&digest);
     if !path.exists() {
         let dir = path.parent().expect("分片路径必有父目录");
@@ -345,11 +364,11 @@ async fn download(job: &Job) -> anyhow::Result<(Stored, i64, Option<String>)> {
         tokio::fs::rename(&tmp, &path).await?;
         tracing::debug!(md5 = %digest, bytes = bytes.len(), "已归档图片");
     }
-    Ok((Stored { md5: digest, path }, bytes.len() as i64, format))
+    Ok((Stored { md5: digest, path }, bytes.len() as i64, format, animated))
 }
 
 /// 下载成功后的登记收尾:真 md5 与凭据不同(无名来源/提示谎报)时删凭据行,
-/// 真 md5 行 upsert 成 done(带字节数、嗅探格式)。
+/// 真 md5 行 upsert 成 done(带字节数、嗅探格式、是否动图)。
 async fn finish_db(
     db: &DatabaseConnection,
     ticket: &str,
@@ -357,6 +376,7 @@ async fn finish_db(
     url: &str,
     size: i64,
     format: Option<String>,
+    animated: bool,
 ) {
     if stored.md5 != ticket
         && let Err(e) = media_file::Entity::delete_by_id(ticket).exec(db).await
@@ -370,6 +390,7 @@ async fn finish_db(
         error: Set(None),
         size: Set(Some(size)),
         format: Set(format),
+        animated: Set(Some(animated)),
         done_at: Set(Some(chrono::Utc::now().fixed_offset())),
         ..Default::default()
     };
@@ -381,6 +402,7 @@ async fn finish_db(
                 media_file::Column::Error,
                 media_file::Column::Size,
                 media_file::Column::Format,
+                media_file::Column::Animated,
                 media_file::Column::DoneAt,
             ])
             .to_owned(),
@@ -403,10 +425,10 @@ async fn mark_failed(db: &DatabaseConnection, ticket: &str, msg: &str) {
     }
 }
 
-/// 新行的初始形态:还要下载(pending),或已在盘上(done,带自愈嗅探出的格式/字节数)。
+/// 新行的初始形态:还要下载(pending),或已在盘上(done,带自愈嗅探出的格式/字节数/动图标志)。
 enum Init {
     Pending,
-    Done { format: Option<String>, size: Option<i64> },
+    Done { format: Option<String>, size: Option<i64>, animated: Option<bool> },
 }
 
 /// 记一次「遇见」:行不存在按 `init` 形态插入(`seen_count` 库默认 1);已存在则
@@ -427,10 +449,11 @@ async fn record_seen(
     };
     match init {
         Init::Pending => row.status = Set("pending".into()),
-        Init::Done { format, size } => {
+        Init::Done { format, size, animated } => {
             row.status = Set("done".into());
             row.format = Set(format);
             row.size = Set(size);
+            row.animated = Set(animated);
             row.done_at = Set(Some(chrono::Utc::now().fixed_offset()));
         }
     }
@@ -458,6 +481,7 @@ async fn set_pending(db: &DatabaseConnection, key: &str) {
         error: Set(None),
         size: Set(None),
         format: Set(None),
+        animated: Set(None),
         done_at: Set(None),
         ..Default::default()
     };
@@ -508,25 +532,49 @@ pub fn sniff_image_ct(bytes: &[u8]) -> Option<&'static str> {
     image::guess_format(bytes).ok().map(|f| f.to_mime_type())
 }
 
+/// 字节嗅探是否**动图**(GIF / 动画 WebP / APNG)——内嵌渲染会把动图压成单帧,呈现方
+/// 据此决定原样发段还是嵌进排版文档。
+/// - GIF:一律当动图。静态 GIF 罕见,误判的代价只是不内嵌、改原样发段,呈现无损。
+/// - WebP:`VP8X` 扩展头的 animation 位(RIFF 偏移 12 为 `VP8X` 时,偏移 20 的 bit 0x02)。
+/// - PNG:`IDAT` 之前出现 `acTL` 块即 APNG(动画表情常见 `.suf` 实为 APNG)。
+///
+/// 其余格式当静图。
+pub fn is_animated_image(bytes: &[u8]) -> bool {
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return true;
+    }
+    if bytes.len() > 20 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return &bytes[12..16] == b"VP8X" && bytes[20] & 0x02 != 0;
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        // acTL 须在 IDAT 之前(APNG 规范);先定位 IDAT,只在其前找 acTL。
+        let idat = bytes.windows(4).position(|w| w == b"IDAT").unwrap_or(bytes.len());
+        return bytes[..idat].windows(4).any(|w| w == b"acTL");
+    }
+    false
+}
+
 /// 嗅探格式的入库短标签(MIME 去掉 `image/` 前缀:`png`/`jpeg`/`gif`/`webp`/…)。
 fn format_tag(bytes: &[u8]) -> Option<String> {
     sniff_image_ct(bytes).map(|ct| ct.trim_start_matches("image/").to_string())
 }
 
-/// 读盘上文件的头部嗅探格式 + 取字节数(自愈补行用;读不出皆 `None`)。
-async fn sniff_disk(path: &Path) -> (Option<String>, Option<i64>) {
+/// 读盘上文件的头部嗅探格式与动图标志 + 取字节数(自愈补行用;读不出皆 `None`)。
+/// 读 4KB:格式签名 64 字节就够,动图判定(APNG 的 `acTL` 须在 `IDAT` 前)要看更深——
+/// 头部塞满辅助块把 `IDAT` 挤出 4KB 的 PNG 理论存在,误判为静图,代价仅是呈现方不打动图标。
+async fn sniff_disk(path: &Path) -> (Option<String>, Option<i64>, Option<bool>) {
     use tokio::io::AsyncReadExt;
     let size = tokio::fs::metadata(path).await.ok().map(|m| m.len() as i64);
-    let mut head = [0u8; 64]; // 盖住 guess_format 签名表里最长的魔数
+    let mut head = [0u8; 4096];
 
-    let format = match tokio::fs::File::open(path).await {
+    let (format, animated) = match tokio::fs::File::open(path).await {
         Ok(mut f) => match f.read(&mut head).await {
-            Ok(n) => format_tag(&head[..n]),
-            Err(_) => None,
+            Ok(n) => (format_tag(&head[..n]), Some(is_animated_image(&head[..n]))),
+            Err(_) => (None, None),
         },
-        Err(_) => None,
+        Err(_) => (None, None),
     };
-    (format, size)
+    (format, size, animated)
 }
 
 /// 进程级共享的 HTTP 客户端(rustls,30s 超时)。
