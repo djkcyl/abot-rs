@@ -6,6 +6,9 @@
 pub mod config;
 pub mod data;
 
+/// 出图字体栈:框架内置黑体/等宽 + abot 自备宋体/楷体(详见 `fonts::handle`)。
+pub mod fonts;
+
 /// crate 级内容审核器:腾讯云 AI 主、本地关键词/二维码兜底(详见 `moderation::ContentModerator`)。
 pub mod moderation;
 
