@@ -31,12 +31,12 @@ enum Setting {
     UpdatedAt,
 }
 
-/// 这支迁移:建 `web_token` 与 `setting` 两张表。名带日期序号前缀(晚于既有插件迁移)。
+/// 这支迁移:建 `web_token` 与 `setting` 两张表。名取统一序列 `m20260610_0000NN`。
 pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20260608_000001_create_web"
+        "m20260610_000005_create_web"
     }
 }
 

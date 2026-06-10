@@ -2,8 +2,8 @@
 //! 接入核心 [`Migrator`](crate::data::migration::Migrator)。
 //!
 //! 核心 `Migrator` 经 `nagisa::inventory` 收集所有 `PluginMigration`（与 `#[command]` 同
-//! 款机制），故核心代码**不**引用本插件即可应用这支迁移。迁移名带日期序号前缀且**晚于**
-//! 核心迁移（`m20250101_000001`），保证排序稳定：核心先建共享表、插件后建自有表。
+//! 款机制），故核心代码**不**引用本插件即可应用这支迁移。迁移名取统一序列
+//! `m20260610_0000NN`(见核心迁移说明),序号晚于核心:核心先建共享表、插件后建自有表。
 
 use sea_orm_migration::prelude::*;
 
@@ -33,7 +33,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20250102_000001_create_sign"
+        "m20260610_000002_create_sign"
     }
 }
 

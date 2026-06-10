@@ -2,14 +2,14 @@
 //! 丢出时间 / 来源 / 文本 / 图）+ 每条评论一节点 + 末尾操作提示节点。
 //!
 //! 只读：评分均值走 [`logic::score_avg`]、评论走 [`logic::get_discuss`]，图片从盘按文件名
-//! 重发（[`images::image_dir`]，QQ 的图片 URL 会过期，故捞取时一律本地重发）。匿名瓶子的
+//! 重发（[`crate::media::resolve`]，QQ 的图片 URL 会过期，故捞取时一律本地重发）。匿名瓶子的
 //! 首节点署名 bot 自己、名「匿名漂流瓶」，并隐藏来源群；非匿名署名投放者。
 
 use nagisa::prelude::*;
 use sea_orm::DatabaseConnection;
 
 use super::entity::bottle;
-use super::{images, logic};
+use super::logic;
 
 /// 把一只瓶子渲染成合并转发。
 ///
@@ -53,8 +53,9 @@ pub async fn bottle_forward(
     if let Some(text) = b.text.as_deref().filter(|t| !t.is_empty()) {
         content.push(Segment::text(text.to_string()));
     }
-    for name in image_names(&b.images) {
-        content.push(Segment::image_path(images::image_dir().join(name)));
+    for md5 in image_names(&b.images) {
+        content.push(Segment::image_path(crate::media::resolve(&md5)));
+        tokio::spawn(crate::media::touch_used(md5)); // 重发即「使用」,刷 last_used
     }
 
     let mut nodes = vec![ForwardNode::new(sender, sender_name, content)];
@@ -79,7 +80,7 @@ pub async fn bottle_forward(
     Ok(Segment::forward(nodes))
 }
 
-/// 解析瓶子 `images`（JSONB 字符串数组）成文件名序列；非数组 / 非字符串项跳过。
+/// 解析瓶子 `images`（JSONB 字符串数组）成内容 md5 序列；非数组 / 非字符串项跳过。
 fn image_names(images: &serde_json::Value) -> Vec<String> {
     images
         .as_array()

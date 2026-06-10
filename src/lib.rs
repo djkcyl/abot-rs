@@ -9,6 +9,9 @@ pub mod data;
 /// 出图字体栈:框架内置黑体/等宽 + abot 自备宋体/楷体(详见 `fonts::handle`)。
 pub mod fonts;
 
+/// 顶层图片缓存服务:收图登记 + 队列下载 + 分片归档,插件经 `wait` 等图就绪(详见 `media`)。
+pub mod media;
+
 /// crate 级内容审核器:腾讯云 AI 主、本地关键词/二维码兜底(详见 `moderation::ContentModerator`)。
 pub mod moderation;
 

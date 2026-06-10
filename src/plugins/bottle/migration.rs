@@ -1,8 +1,7 @@
 //! 漂流瓶插件**自有**的建表迁移 —— 一次建三表（`bottle` / `bottle_score` /
 //! `bottle_discuss`）+ 索引，经 [`PluginMigration`] 自注册接入核心
 //! [`Migrator`](crate::data::migration::Migrator)（与 `#[command]` 同款 inventory 机制，
-//! 核心不感知本插件）。迁移名带日期序号前缀（`m20260609_000002_*`，避开 chatlog 已用的
-//! `m20260609_000001_*`），排序稳定。
+//! 核心不感知本插件）。迁移名取统一序列 `m20260610_0000NN`(见核心迁移说明)。
 
 use sea_orm_migration::prelude::*;
 
@@ -63,7 +62,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20260609_000002_create_bottle"
+        "m20260610_000006_create_bottle"
     }
 }
 

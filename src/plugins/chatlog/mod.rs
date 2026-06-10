@@ -3,7 +3,8 @@
 //! 「插件自有数据」约定的样板(与签到一致)：
 //! - [`entity`] 定义本插件私有的 `chat_log` 表；[`migration`] 建表 + 索引，经 `PluginMigration`
 //!   + `nagisa::inventory` **自注册**接入核心 `Migrator`(核心不感知本插件)；
-//! - `media` 把图片下载到本地盘(按 md5 命名、去重)，detached 跑、绝不阻塞。
+//! - 图片归档走顶层媒体服务([`crate::media`]):本记录器是它的入口——每条消息里的图
+//!   登记 + 排队下载,detached 跑、绝不阻塞;别的插件经 `media::wait` 等图就绪。
 //!
 //! 发言数**不**进核心 `user` 表：它只有一个写者(本记录器)、别处只读，与签到连签同形,故归本插件
 //! ——直接 `COUNT(*)` 自 `chat_log` 派生(单一真相,无冗余计数、无每条双写,连没有 `user` 行的潜水者
@@ -14,7 +15,6 @@
 
 pub mod entity;
 pub mod migration;
-mod media;
 mod profile;
 
 use nagisa::prelude::*;
@@ -65,10 +65,10 @@ async fn record(m: MessageEvent, Db(db): Db) -> HandlerResult {
         tracing::warn!(error = %e, "写消息记录失败");
     }
 
-    // 图片归档：detached，绝不阻塞消息处理。
-    let jobs = media::collect_jobs(&m.content);
-    if !jobs.is_empty() {
-        tokio::spawn(async move { media::archive(jobs).await });
+    // 图片归档：登记 + 排队交给顶层媒体服务,detached、绝不阻塞消息处理。
+    let refs = crate::media::scan(&m.content);
+    if !refs.is_empty() {
+        tokio::spawn(crate::media::ingest(refs));
     }
     Ok(())
 }

@@ -55,6 +55,10 @@ async fn main() -> anyhow::Result<()> {
     Migrator::up(&db, None).await?;
     tracing::info!("已连接数据库并应用迁移");
 
+    // 顶层图片缓存服务:建目录、拉起下载队列、重排残留 pending。
+    // 插件经 abot::media(scan/ingest/wait/resolve)用图,自己不下载。
+    abot::media::init(db.clone()).await?;
+
     // 装一个出站消息日志器：bot 发出的每条消息也落 chat_log（凑成双向会话历史）。与
     // nagisa-log 自己装的那个并存（多订阅）。落库在独立任务里跑，绝不阻塞发送。
     let db_for_log = db.clone();

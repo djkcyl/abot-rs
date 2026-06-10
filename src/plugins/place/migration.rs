@@ -1,8 +1,7 @@
 //! 画板插件**自有**的建表迁移 —— 建 `place_pixel`(画布真值)+ `place_history`(追加审计),
 //! 经 [`PluginMigration`] 自注册接入核心 [`Migrator`](crate::data::migration::Migrator)。
 //!
-//! 迁移名带日期序号前缀且**晚于**核心(`m20250101`)、签到(`m20250102`)、消息记录(`m20250103`),
-//! 取 `m20250104`,保证排序稳定:核心先建共享表、插件后建自有表。
+//! 迁移名取统一序列 `m20260610_0000NN`(见核心迁移说明)。
 
 use sea_orm_migration::prelude::*;
 
@@ -11,11 +10,6 @@ use crate::data::migration::PluginMigration;
 // 自注册:登记进进程级 `inventory` 集合,供核心 `Migrator` 收集(无需核心引用本插件)。
 nagisa::inventory::submit! {
     PluginMigration(|| Box::new(Migration))
-}
-
-// 第二支迁移:补 place_history(at) 索引(见下 AtIndex)。
-nagisa::inventory::submit! {
-    PluginMigration(|| Box::new(AtIndex))
 }
 
 /// `place_pixel` 列标识。
@@ -48,7 +42,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20250104_000001_create_place"
+        "m20260610_000004_create_place"
     }
 }
 
@@ -117,6 +111,18 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // (at) 独立索引:`recent_history` 的 `ORDER BY at DESC` 与回放的 `ORDER BY at ASC`
+        // 不带 uin 过滤,复合索引服务不了,append-only 表越长越退化成全表扫 + filesort。
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_place_history_at")
+                    .table(PlaceHistory::Table)
+                    .col(PlaceHistory::At)
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
@@ -131,38 +137,3 @@ impl MigrationTrait for Migration {
     }
 }
 
-/// 第二支迁移:给 `place_history(at)` 加独立索引。
-///
-/// 既有的 `(uin, at)` 复合索引服务不了「无 uin 过滤、仅按 at 排序」的两个最重查询
-/// (`recent_history` 的 `ORDER BY at DESC`、回放的 `ORDER BY at ASC`)——append-only 表越长
-/// 越退化成全表扫 + filesort。补一个 `(at)` 索引专治它俩。
-pub struct AtIndex;
-
-impl MigrationName for AtIndex {
-    fn name(&self) -> &str {
-        "m20250105_000001_place_history_at_index"
-    }
-}
-
-#[async_trait::async_trait]
-impl MigrationTrait for AtIndex {
-    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_place_history_at")
-                    .table(PlaceHistory::Table)
-                    .col(PlaceHistory::At)
-                    .to_owned(),
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .drop_index(Index::drop().name("idx_place_history_at").to_owned())
-            .await?;
-        Ok(())
-    }
-}

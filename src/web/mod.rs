@@ -200,22 +200,14 @@ async fn serve_media(
     if !q.sig.as_deref().is_some_and(|s| crate::web::media::verify(&name, s)) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    // 与 images.rs::image_dir() 同款 env 读取(`IMAGE_DIR`,默认 `./data/images`),
-    // 此处复刻这两行以免 web 模块耦合到漂流瓶插件。
-    let dir = std::env::var("IMAGE_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("./data/images"));
-    let path = dir.join(&name);
+    // 路径解析交给顶层媒体服务:文件名 → 分片归档路径。
+    let path = crate::media::resolve(&name);
     let Ok(bytes) = tokio::fs::read(&path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let ct = match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        _ => "application/octet-stream",
-    };
+    // 盘上文件无后缀(内容寻址),Content-Type 按字节魔数嗅探,认不出回 octet-stream。
+    let ct = crate::media::sniff_image_ct(&bytes).unwrap_or("application/octet-stream");
+    tokio::spawn(crate::media::touch_used(name)); // 取图即「使用」,刷 last_used
     ([(header::CONTENT_TYPE, ct)], bytes).into_response()
 }
 

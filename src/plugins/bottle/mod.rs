@@ -223,7 +223,7 @@ async fn throw(
             nickname: sender_nickname(&m),
             group_id: source_group(&m),
             text: has_text.then_some(text),
-            images: images.into_iter().map(|i| i.filename).collect(),
+            images: images.into_iter().map(|i| i.md5).collect(),
             anonymous,
             remaining,
             status: status.clone(),

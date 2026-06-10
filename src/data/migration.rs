@@ -42,14 +42,17 @@ impl MigratorTrait for Migrator {
             nagisa::inventory::iter::<PluginMigration>.into_iter().map(|p| (p.0)()).collect();
         plugins.sort_by(|a, b| a.name().cmp(b.name()));
         let mut all: Vec<Box<dyn MigrationTrait>> =
-            vec![Box::new(m20250101_000001_create_tables::Migration)];
+            vec![Box::new(m20260610_000001_create_core::Migration)];
         all.extend(plugins);
         all
     }
 }
 
-/// 唯一一支迁移：一次性建三张基础表。
-mod m20250101_000001_create_tables {
+/// 唯一一支核心迁移：一次性建三张基础表。
+///
+/// 迁移名统一 `m20260610_0000NN_create_*` 序列(2026-06-10 重置基线:库从零重建,
+/// 每张表一支干净建表迁移,不留「建表后追补改表」的历史层叠;核心 01,插件按序后排)。
+mod m20260610_000001_create_core {
     use super::*;
 
     /// `user` 表的列标识（**仅**跨插件共享字段；签到等插件私有列不在此表）。
@@ -84,13 +87,13 @@ mod m20250101_000001_create_tables {
         At,
     }
 
-    /// 这支迁移。迁移名手写为 `m20250101_000001_create_tables`（带日期序号前缀，
-    /// 便于将来追加迁移时天然排序），记进 `seaql_migrations` 作为已应用标记。
+    /// 这支迁移。迁移名带日期序号前缀（便于将来追加迁移时天然排序），记进
+    /// `seaql_migrations` 作为已应用标记。
     pub struct Migration;
 
     impl MigrationName for Migration {
         fn name(&self) -> &str {
-            "m20250101_000001_create_tables"
+            "m20260610_000001_create_core"
         }
     }
 
