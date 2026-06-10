@@ -95,7 +95,7 @@ fn cooldown_msg(remain_min: i64, interval_min: i64, level: i64) -> String {
 「画板 净」出一张无网格无刻度的干净分享图（带日期水印）。画布 256×144 格、32 色，所有群共用同一块。")]
 async fn place_view(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
     let rest = args.0.trim();
-    let png = if rest.is_empty() {
+    let img = if rest.is_empty() {
         render::render_full(&db).await
     } else if is_clean_kw(rest) {
         render::render_clean(&db).await
@@ -109,7 +109,7 @@ async fn place_view(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
         reply.reply("看全图发「画板」，看局部发「画板 x,y」，分享图发「画板 净」").await?;
         return Ok(());
     };
-    match png {
+    match img {
         Ok(bytes) => reply.msg().image_bytes(bytes).send().await?,
         Err(e) => reply.reply(format!("画板渲染失败：{e}")).await?,
     };

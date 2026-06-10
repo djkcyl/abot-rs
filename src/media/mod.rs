@@ -18,6 +18,7 @@
 
 pub mod entity;
 pub mod migration;
+pub mod placeholder;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

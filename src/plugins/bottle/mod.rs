@@ -9,7 +9,7 @@ pub mod entity;
 pub mod images;
 pub mod logic;
 mod migration;
-mod render;
+pub mod render;
 mod review;
 
 use nagisa::prelude::*;
@@ -289,14 +289,21 @@ async fn check(reply: Reply, user: AUser, bot: Bot, State(master): State<Master>
             reply.reply("你还没有丢过漂流瓶").await?;
             return Ok(());
         }
-        // 批量取这批瓶子的评分（一次查询），再按瓶逐行展示。
+        // 批量取这批瓶子的评分（一次查询）,渲成表格图;渲染失败退回逐行文字（chunk_items）。
         let ids: Vec<i64> = rows.iter().map(|b| b.id).collect();
         let scores = logic::score_avgs(&db, &ids).await.context("取漂流瓶评分")?;
-        // 列表走合并转发：**按「一条瓶子」为单位切节点**（chunk_items，不会把某条瓶子拆到两节点）。
-        let mut items: Vec<String> = Vec::with_capacity(rows.len() + 1);
-        items.push(format!("你的漂流瓶（近 {} 个）", rows.len()));
-        items.extend(rows.iter().map(|b| fmt_list_line(b, scores.get(&b.id).copied())));
-        let nodes = ForwardNode::chunk_items(bot.self_id(), "我的漂流瓶", items, "\n", 3000);
+        let nodes = match render::list_image(&rows, &scores) {
+            Ok(webp) => {
+                vec![ForwardNode::new(bot.self_id(), "我的漂流瓶", vec![Segment::image_bytes(webp)])]
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "渲染漂流瓶列表失败,退回文字");
+                let mut items: Vec<String> = Vec::with_capacity(rows.len() + 1);
+                items.push(format!("你的漂流瓶（近 {} 个）", rows.len()));
+                items.extend(rows.iter().map(|b| fmt_list_line(b, scores.get(&b.id).copied())));
+                ForwardNode::chunk_items(bot.self_id(), "我的漂流瓶", items, "\n", 3000)
+            }
+        };
         reply.send(&[Segment::Forward(Forward::nodes(nodes).title("我的漂流瓶"))]).await?;
         return Ok(());
     };
@@ -460,22 +467,12 @@ fn fmt_list_line(b: &entity::bottle::Model, score: Option<f64>) -> String {
         b.total_pickups,
         remaining,
         score_text,
-        status_text(&b.status),
+        render::status_text(&b.status),
     );
     if b.anonymous {
         line.push_str(" · 匿名");
     }
     line
-}
-
-/// 审核状态的中文呈现。
-fn status_text(status: &str) -> &'static str {
-    match status {
-        "pending" => "待审核",
-        "approved" | "ai_approved" => "已通过",
-        "rejected" => "未通过",
-        _ => "未知",
-    }
 }
 
 /// 取发送者显示名：群消息用群名片/昵称，私聊用好友备注/昵称；都取不到为 `None`。

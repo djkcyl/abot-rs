@@ -7,7 +7,7 @@
 
 use nagisa::prelude::*;
 use chrono::Local;
-use image::codecs::png::PngEncoder;
+use image::codecs::webp::WebPEncoder;
 use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage, Rgba, RgbaImage};
 use sea_orm::{DatabaseConnection, EntityTrait};
 
@@ -65,12 +65,12 @@ fn rect_outline(img: &mut RgbImage, x: u32, y: u32, w: u32, h: u32, c: Rgb<u8>, 
     fill_rect(img, x + w.saturating_sub(t), y, t, h, c);
 }
 
-/// 把图编码成 PNG 字节。
+/// 把图编码成 WebP 字节(无损;bot 内出图统一 WebP)。
 fn encode(img: &RgbImage) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    PngEncoder::new(&mut out)
+    WebPEncoder::new_lossless(&mut out)
         .write_image(img.as_raw(), img.width(), img.height(), ExtendedColorType::Rgb8)
-        .context("编码 PNG")?;
+        .context("编码 WebP")?;
     Ok(out)
 }
 

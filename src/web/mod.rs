@@ -182,7 +182,9 @@ impl Service for ConsoleService {
 /// URL 签名挡住对目录的枚举/伪造:签名由审核详情用进程级密钥生成(见 [`media`](crate::web::media)),
 /// 签名缺失或不匹配一律 404。
 ///
-/// 防目录穿越:文件名为空、含 `/`、`\`、`..` 一律 404;文件不存在/读不出也 404。
+/// 防目录穿越:文件名为空、含 `/`、`\`、`..` 一律 404。签名**有效**但文件读不出(被清理/
+/// 盘损)回一张占位图(200,随机渐变底 + 「图片已失效」 + md5,与捞瓶占位同款):审核页上
+/// 让人知道这里有图、只是失效了,而不是裂图标。无效签名仍 404,不暴露存在性。
 /// `/api/media/{name}` 的查询串：图片访问签名。
 #[derive(serde::Deserialize)]
 struct MediaQuery {
@@ -203,7 +205,10 @@ async fn serve_media(
     // 路径解析交给顶层媒体服务:文件名 → 分片归档路径。
     let path = crate::media::resolve(&name);
     let Ok(bytes) = tokio::fs::read(&path).await else {
-        return StatusCode::NOT_FOUND.into_response();
+        return match crate::media::placeholder::missing_image_webp(&name) {
+            Ok(webp) => ([(header::CONTENT_TYPE, "image/webp")], webp).into_response(),
+            Err(_) => StatusCode::NOT_FOUND.into_response(),
+        };
     };
     // 盘上文件无后缀(内容寻址),Content-Type 按字节魔数嗅探,认不出回 octet-stream。
     let ct = crate::media::sniff_image_ct(&bytes).unwrap_or("application/octet-stream");
