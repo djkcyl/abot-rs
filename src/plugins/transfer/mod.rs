@@ -24,7 +24,7 @@ plugin! {
     category = Fun,
 }
 
-/// 每日转出上限(老 abot 口径)。今日已转额从 `coin_log` 派生。
+/// 每日转出上限。今日已转额从 `coin_log` 派生。
 const DAILY_LIMIT: i64 = 200;
 
 /// `转账 @某人 <数额 | --all>` 的参数。**都可选**:缺啥由 handler 解释,不靠解析层回贴 usage。

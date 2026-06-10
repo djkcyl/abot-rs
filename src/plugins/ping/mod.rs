@@ -2,7 +2,7 @@
 //!
 //! 独立成插件(经 `plugin!{}` 登记):确认 bot 在线、dispatch 链路通。属工具类,
 //! 无私有数据 / 逻辑,只有一条薄壳命令。设 `can_disable = false`——探针应当永远应答,
-//! 不被「一键禁用全部」之类的操作误关(对齐原 ABot 核心插件 `can_be_disabled=False`)。
+//! 不被「一键禁用全部」之类的操作误关。
 
 use nagisa::prelude::*;
 

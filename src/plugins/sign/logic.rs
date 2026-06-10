@@ -24,17 +24,25 @@ use crate::plugins::sign::entity as sign;
 pub enum SignOutcome {
     /// 今天已经签过到了（`last_sign == 当日`），未发放奖励。
     Already,
-    /// 本次签到完成：携带文案所需的全部结算数据（金币各分项 + 经验 + 等级）。
+    /// 本次签到完成：携带呈现所需的全部结算数据（金币各分项 + 经验 + 等级）。
     Done {
         /// 本次发放的金币总数（基础 + 连签加成 + 手气 + 里程碑 + 首签 + 大奖）。
         gold_add: i64,
+        /// 金币分项：基础随机额。
+        base: i64,
+        /// 金币分项：连签加成（`min(连签, 30) * 2`）。
+        streak_bonus: i64,
+        /// 金币分项：手气随机额。
+        luck: i64,
         /// 包含本次的连续签到天数。
         continue_sign: i32,
+        /// 包含本次的累计签到次数。
+        total_sign: i32,
         /// 里程碑奖励：恰好在第 7 / 30 / 100 天命中（一次性，否则 0）。
         milestone: i64,
-        /// 是否为该账号有史以来的首次签到（`total_sign == 1`）。
+        /// 是否为该账号有史以来的首次签到（`total_sign == 1`，礼金 [`FIRST_GIFT`]）。
         first_sign: bool,
-        /// 是否抽中 1% 的「大奖」（额外 +666）。
+        /// 是否抽中「大奖」（额外 +[`JACKPOT_GOLD`]）。
         jackpot: bool,
         /// 本次获得的经验值。
         exp_gain: i64,
@@ -51,7 +59,9 @@ const SIGN_REASON: &str = "签到";
 /// 「大奖」中奖概率。中奖额外 +[`JACKPOT_GOLD`] 金币。稀有度只调这一个常量。
 const JACKPOT_PROB: f64 = 0.003;
 /// 「大奖」奖金。
-const JACKPOT_GOLD: i64 = 666;
+pub const JACKPOT_GOLD: i64 = 666;
+/// 首次签到礼金。
+pub const FIRST_GIFT: i64 = 66;
 
 /// 按 `uin` 取或建签到行：命中即返回；缺失则插一行默认值（计数取库侧缺省 0）再返回。
 ///
@@ -113,17 +123,17 @@ pub async fn do_sign(db: &DatabaseConnection, user: &mut AUser) -> Result<SignOu
     // 把随机抽样全收进一个块里——`ThreadRng` 非 `Send`，绝不能跨 `.await` 持有（否则
     // handler future 非 `Send`），故在任何 `.await` 之前就把它取样成纯 `i64`/`bool` 并随
     // 块结束 drop 掉。
-    let (gold_add, jackpot, exp_gain) = {
+    let (gold_add, base, streak_bonus, luck, jackpot, exp_gain) = {
         let mut rng = rand::rng();
         let base: i64 = rng.random_range(8..=18);
         let streak_bonus: i64 = (continue_sign as i64).min(30) * 2;
         let luck: i64 = rng.random_range(0..=15);
-        let first_gift: i64 = if first_sign { 66 } else { 0 };
+        let first_gift: i64 = if first_sign { FIRST_GIFT } else { 0 };
         let jackpot_hit = rng.random_bool(JACKPOT_PROB);
         let jackpot_gold: i64 = if jackpot_hit { JACKPOT_GOLD } else { 0 };
         let gold_add = base + streak_bonus + luck + milestone + first_gift + jackpot_gold;
         let exp_gain = 10 + (continue_sign as i64).min(30) + rng.random_range(0..=5);
-        (gold_add, jackpot_hit, exp_gain)
+        (gold_add, base, streak_bonus, luck, jackpot_hit, exp_gain)
     };
 
     // 落签到字段（last_sign/continue/total）到本插件自有的 sign 表。
@@ -141,7 +151,11 @@ pub async fn do_sign(db: &DatabaseConnection, user: &mut AUser) -> Result<SignOu
 
     Ok(SignOutcome::Done {
         gold_add,
+        base,
+        streak_bonus,
+        luck,
         continue_sign,
+        total_sign,
         milestone,
         first_sign,
         jackpot,

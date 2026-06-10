@@ -556,9 +556,6 @@ fn fmt_list_line(b: &entity::bottle::Model, score: Option<f64>) -> String {
 /// 把 [`MessageId`] 规整成跨协议稳定的查询键：OneBot 取 `onebot_id`、Milky 取 `seq`，均带
 /// 会话寻址。同协议下「发送返回的 id」与「回复段解出的 id」据此落到同一个键上（OneBot 两侧
 /// 都是 `seq=0 + onebot_id`,Milky 两侧都是 `(peer, seq)`）。两者都缺（异常形态）返 `None`。
-///
-/// **已知未解**:私聊里回复合并转发,收到的 reply 段 id 是 0(群里正常),疑似框架解码或
-/// Lagrange 侧问题,待查——先不在这层绕。
 fn msg_key(id: &MessageId) -> Option<String> {
     let scene = match id.peer.scene {
         Scene::Friend => "f",

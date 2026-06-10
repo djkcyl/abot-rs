@@ -46,6 +46,34 @@ fn brand_footer() -> PageChrome {
     .band("#ebf4f2")
 }
 
+/// 拉一张 QQ 头像(q.qlogo.cn,640px)。给出图卡片嵌头部用;头像会换,不进媒体归档,
+/// 现拉现用。拉不到返回 `None`(只记日志),卡片缺头像照常渲。
+pub async fn qq_avatar(uin: i64) -> Option<Vec<u8>> {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    let client = CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default()
+    });
+    let url = format!("https://q.qlogo.cn/g?b=qq&nk={uin}&s=640");
+    let resp = match client.get(&url).send().await.and_then(|r| r.error_for_status()) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(uin, error = %e, "拉 QQ 头像失败");
+            return None;
+        }
+    };
+    match resp.bytes().await {
+        Ok(b) => Some(b.to_vec()),
+        Err(e) => {
+            tracing::warn!(uin, error = %e, "读 QQ 头像字节失败");
+            None
+        }
+    }
+}
+
 /// 启动预热:字体栈构建(zstd 解压 + 字体库扫描)与首次整形 / 栅格的开销一次付清,
 /// 不让第一个出图命令多等一秒。渲一张小图把链路全走一遍;失败上抛(出图链路坏了
 /// 该在启动时就知道,而不是首个用户命令踩坑)。

@@ -30,14 +30,15 @@ plugin! {
     name = "消息记录",
     category = Tool,
     can_disable = false,
-    // 后台基础插件,不进用户菜单(对齐原 ABot-NT chat_log 的 hidden=True)。
+    // 后台基础插件,不进用户菜单。
     hidden = true,
     description = "记录聊天消息",
 }
 
 /// 每条收到的消息：落一行 `chat_log` + detached 归档图片(发言数由 `COUNT` 派生,见 [`profile`])。
 ///
-/// `top` 使其与命令并行、对每条消息都跑、最早触发。bot 自己发的不记(只记收到的，与老 abot 一致)。
+/// `top` 使其与命令并行、对每条消息都跑、最早触发。bot 自己发的不经此路(出站另由
+/// [`add_outgoing_logger`] 落库)。
 /// 落库失败只记日志、不影响其它处理；图片下载在独立任务里跑，绝不阻塞。
 #[event(Message, top, id = "record")]
 async fn record(m: MessageEvent, Db(db): Db) -> HandlerResult {
