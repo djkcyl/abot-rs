@@ -66,6 +66,13 @@ async fn main() -> anyhow::Result<()> {
     // 插件经 abot::media(scan/ingest/wait/resolve)用图,自己不下载。
     abot::media::init(db.clone()).await?;
 
+    // 渲染器预热:字体栈构建(zstd 解压 + 字体库扫描)与首次整形/栅格的开销在启动时一次
+    // 付清,不让第一个出图命令多等一秒。纯 CPU 活,放 blocking 线程跑;失败即启动失败
+    // (出图链路坏了该现在知道,而不是首个用户命令踩坑)。
+    let warm = std::time::Instant::now();
+    tokio::task::spawn_blocking(abot::imaging::warmup).await??;
+    tracing::info!(elapsed_ms = warm.elapsed().as_millis() as u64, "渲染器已预热");
+
     // 装一个出站消息日志器：bot 发出的每条消息也落 chat_log（凑成双向会话历史）。与
     // nagisa-log 自己装的那个并存（多订阅）。落库在独立任务里跑，绝不阻塞发送。
     let db_for_log = db.clone();

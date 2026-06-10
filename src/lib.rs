@@ -9,6 +9,9 @@ pub mod data;
 /// 出图字体栈:框架内置黑体/等宽 + abot 自备宋体/楷体(详见 `fonts::handle`)。
 pub mod fonts;
 
+/// 出图公共底座:统一 RenderOptions(字体栈 + WebP + 页脚项目水印)与启动预热(详见 `imaging`)。
+pub mod imaging;
+
 /// 顶层图片缓存服务:收图登记 + 队列下载 + 分片归档,插件经 `wait` 等图就绪(详见 `media`)。
 pub mod media;
 

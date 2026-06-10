@@ -21,14 +21,10 @@ const COMMENTS_PAGE_MAX_PX: u32 = 4000;
 /// 量高分页失败时的退路:固定每页楼数。
 const COMMENTS_PER_IMAGE_FALLBACK: usize = 10;
 
-/// 出图公共选项:960 逻辑宽(随引擎默认档)、WebP、abot 字体栈。
+/// 出图公共选项:公共底座(字体栈 / WebP / 页脚项目水印)+ 本插件的边距口径。
 fn render_opts() -> nagisa::render::RenderOptions {
-    use nagisa::render::{Insets, OutputFormat, RenderOptions};
-    RenderOptions::default()
-        .with_width(960.0)
-        .with_padding(Insets::symmetric(36.0, 40.0))
-        .with_fonts(crate::fonts::handle())
-        .with_format(OutputFormat::Webp)
+    use nagisa::render::Insets;
+    crate::imaging::render_opts().with_padding(Insets::symmetric(36.0, 40.0))
 }
 
 /// 把一只瓶子渲染成合并转发。
@@ -290,18 +286,20 @@ pub fn card_image(
         }
     }
 
-    // 操作提示脚注。
+    // 操作提示脚注:两行各自居中(一长行折行会参差,底部观感就歪了)。
     d.divider();
     d.paragraph(|p| {
-        p.styled(
-            format!(
-                "评分:发送「漂流瓶评分 {0} 分数」    评论:发送「漂流瓶评论 {0} 内容」    取原文:回复本条发送「取原文」",
-                b.id
-            ),
+        p.align(Align::Center).styled(
+            format!("评分:发送「漂流瓶评分 {0} 分数」    评论:发送「漂流瓶评论 {0} 内容」", b.id),
             |s| {
                 s.color("#9aa0a8").size(0.8);
             },
         );
+    });
+    d.paragraph(|p| {
+        p.align(Align::Center).styled("取原文:对着本条转发回复「取原文」", |s| {
+            s.color("#9aa0a8").size(0.8);
+        });
     });
 
     Ok(render_document(&d.build(), &render_opts())?)
