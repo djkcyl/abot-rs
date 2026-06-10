@@ -55,6 +55,13 @@ async fn main() -> anyhow::Result<()> {
     Migrator::up(&db, None).await?;
     tracing::info!("已连接数据库并应用迁移");
 
+    // 主人账号自动注册:user 行平时都是首次互动时经 AUser 提取器建的,主人可能从未跟 bot
+    // 说过话——启动时提前取或建,转账给主人、给主人发奖这些要主人行的路径不至于踩「不存在」。
+    // 真·首次会由 AUser::get 记一条「新用户注册」;此后每次启动都是纯命中,无副作用。
+    if cfg.master.0 != 0 {
+        abot::data::AUser::get(&db, cfg.master.0).await?;
+    }
+
     // 顶层图片缓存服务:建目录、拉起下载队列、重排残留 pending。
     // 插件经 abot::media(scan/ingest/wait/resolve)用图,自己不下载。
     abot::media::init(db.clone()).await?;
