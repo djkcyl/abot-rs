@@ -1,5 +1,5 @@
-//! 漂流瓶插件**自有**的建表迁移 —— 一次建三表（`bottle` / `bottle_score` /
-//! `bottle_discuss`）+ 索引，经 [`PluginMigration`] 自注册接入核心
+//! 漂流瓶插件**自有**的建表迁移 —— 一次建四表（`bottle` / `bottle_score` /
+//! `bottle_discuss` / `bottle_sent`）+ 索引，经 [`PluginMigration`] 自注册接入核心
 //! [`Migrator`](crate::data::migration::Migrator)（与 `#[command]` 同款 inventory 机制，
 //! 核心不感知本插件）。迁移名取统一序列 `m20260610_0000NN`(见核心迁移说明)。
 
@@ -57,7 +57,16 @@ enum BottleDiscuss {
     CreatedAt,
 }
 
-/// 这支迁移：建漂流瓶插件自有的三张表 + 索引。
+/// `bottle_sent` 表的列标识。枚举名须为 `BottleSent` 方映射到表名 `bottle_sent`。
+#[derive(DeriveIden)]
+enum BottleSent {
+    Table,
+    MsgKey,
+    BottleId,
+    CreatedAt,
+}
+
+/// 这支迁移：建漂流瓶插件自有的四张表 + 索引。
 pub struct Migration;
 
 impl MigrationName for Migration {
@@ -245,11 +254,33 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // bottle_sent：捞瓶/查瓶发出的合并转发消息 → 瓶子编号的映射（「取原文」按回复目标
+        // 反查瓶子）。msg_key 为协议规整后的消息键（主键，唯一即索引），created_at 供懒清理。
+        manager
+            .create_table(
+                Table::create()
+                    .table(BottleSent::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(BottleSent::MsgKey).text().not_null().primary_key())
+                    .col(ColumnDef::new(BottleSent::BottleId).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(BottleSent::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // 逆序删表（无 FK，顺序仅为对称）。
+        manager
+            .drop_table(Table::drop().table(BottleSent::Table).if_exists().to_owned())
+            .await?;
         manager
             .drop_table(Table::drop().table(BottleDiscuss::Table).if_exists().to_owned())
             .await?;

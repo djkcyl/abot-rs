@@ -1,4 +1,5 @@
-//! 漂流瓶业务逻辑 —— 建瓶、加权捞取、原子计数、去极值评分、评分/评论 upsert、查/软删。
+//! 漂流瓶业务逻辑 —— 建瓶、加权捞取、原子计数、去极值评分、评分/评论 upsert、查/软删、
+//! 发出消息 → 瓶子的映射（「取原文」反查）。
 //!
 //! 只管数据层：传 `&DatabaseConnection`，不碰消息/经济/审核（那些在命令层串）。计数改动一律走
 //! **原子 UPDATE**（`col_expr` / 裸 SQL），绝不读改写；评分/评论的唯一约束冲突走 `on_conflict`。
@@ -9,7 +10,7 @@ use sea_orm::{
     QueryFilter, QueryOrder, QuerySelect, Set,
 };
 
-use super::entity::{bottle, discuss, score};
+use super::entity::{bottle, discuss, score, sent};
 
 /// 可捞状态：人工通过 / AI 直接通过。其余（`pending` / `rejected`）不出现在大海里。
 const PICKABLE_STATUS: [&str; 2] = ["approved", "ai_approved"];
@@ -242,6 +243,45 @@ pub async fn get_discuss(
         .all(db)
         .await?;
     Ok(rows)
+}
+
+/// 消息映射保留天数：超期行在下次 [`record_sent`] 时懒清理（不开定时任务）。
+const SENT_KEEP_DAYS: i64 = 90;
+
+/// 记一条「发出的瓶子转发消息 → 瓶子」映射（「取原文」按回复目标反查用），顺手懒清理
+/// 超期行。同键冲突（理论不至）就地覆盖瓶子编号。
+pub async fn record_sent(
+    db: &DatabaseConnection,
+    msg_key: &str,
+    bottle_id: i64,
+) -> anyhow::Result<()> {
+    sent::Entity::delete_many()
+        .filter(Expr::cust(format!("created_at < now() - interval '{SENT_KEEP_DAYS} days'")))
+        .exec(db)
+        .await?;
+    let row = sent::ActiveModel {
+        msg_key: Set(msg_key.to_owned()),
+        bottle_id: Set(bottle_id),
+        created_at: NotSet,
+    };
+    sent::Entity::insert(row)
+        .on_conflict(
+            OnConflict::column(sent::Column::MsgKey)
+                .update_column(sent::Column::BottleId)
+                .to_owned(),
+        )
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
+/// 按消息键反查瓶子编号（「取原文」回复路径）；没记过或已被清理返 `None`。
+pub async fn sent_bottle_id(
+    db: &DatabaseConnection,
+    msg_key: &str,
+) -> anyhow::Result<Option<i64>> {
+    let row = sent::Entity::find_by_id(msg_key.to_owned()).one(db).await?;
+    Ok(row.map(|r| r.bottle_id))
 }
 
 /// 按编号取瓶（含已删 / 各状态，调用方自行判断可见性）。

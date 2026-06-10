@@ -41,13 +41,7 @@ pub async fn bottle_forward(
     let score = logic::score_avg(db, b.id).await?;
     let comments = logic::get_discuss(db, b.id).await?;
 
-    // 匿名 → 署名 bot、名「匿名漂流瓶」;非匿名 → 署名投放者 uin + 显示名(缺则 QQ 号)。
-    let (sender, sender_name) = if b.anonymous {
-        (self_id, "匿名漂流瓶".to_string())
-    } else {
-        let name = b.nickname.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| b.uin.to_string());
-        (Uin(b.uin), name)
-    };
+    let (sender, sender_name) = sender_of(b, self_id);
 
     // —— 首节点:卡片图(失败退文字)+ 瓶子原图(读不出放占位图)。——
     let mut content = Vec::new();
@@ -58,27 +52,7 @@ pub async fn bottle_forward(
             content.push(Segment::text(card_text(b, score)));
         }
     }
-    for md5 in image_names(&b.images) {
-        // 读字节发 base64:不依赖协议端可读 bot 的盘,也没有无后缀路径的兼容问题。
-        // 读不出(被清理/盘损)不静默吞图:放渐变占位图,让捞的人知道这里本来有张图。
-        match tokio::fs::read(crate::media::resolve(&md5)).await {
-            Ok(bytes) => {
-                content.push(Segment::image_bytes(bytes));
-                tokio::spawn(crate::media::touch_used(md5)); // 重发即「使用」,刷 last_used
-            }
-            Err(e) => {
-                tracing::warn!(%md5, error = %e, "读漂流瓶图片失败,放占位图");
-                match crate::media::placeholder::missing_image_webp(&md5) {
-                    Ok(webp) => content.push(Segment::image_bytes(webp)),
-                    // 占位图都渲染不出(理论不至)才退回文字。
-                    Err(pe) => {
-                        tracing::warn!(error = %pe, "渲染占位图失败,退回文字");
-                        content.push(Segment::text("〔这里有张图片,但已经失效看不了了〕"));
-                    }
-                }
-            }
-        }
-    }
+    push_bottle_images(&mut content, &b.images).await;
     let mut nodes = vec![ForwardNode::new(sender, sender_name, content)];
 
     // —— 评论:按渲染高度装箱分页(每页楼数动态),每页一图一节点,楼号跨页连续;
@@ -116,6 +90,54 @@ pub async fn bottle_forward(
     }
 
     Ok(Segment::forward(nodes))
+}
+
+/// 把一只瓶子的**原始内容**装成合并转发(「取原文」用):原文为可复制的文本段、原图为
+/// 本地归档字节,不走排版引擎。署名规则同 [`bottle_forward`](匿名署 bot、否则署投放者)。
+pub async fn original_forward(b: &bottle::Model, self_id: Uin) -> Segment {
+    let (sender, sender_name) = sender_of(b, self_id);
+    let mut content = Vec::new();
+    if let Some(text) = b.text.as_deref().filter(|t| !t.trim().is_empty()) {
+        content.push(Segment::text(text));
+    }
+    push_bottle_images(&mut content, &b.images).await;
+    let node = ForwardNode::new(sender, sender_name, content);
+    Segment::Forward(Forward::nodes(vec![node]).title(format!("漂流瓶 #{} 原内容", b.id)))
+}
+
+/// 瓶子署名:匿名 → 署名 bot、名「匿名漂流瓶」;非匿名 → 署名投放者 uin + 显示名(缺则 QQ 号)。
+fn sender_of(b: &bottle::Model, self_id: Uin) -> (Uin, String) {
+    if b.anonymous {
+        (self_id, "匿名漂流瓶".to_string())
+    } else {
+        let name =
+            b.nickname.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| b.uin.to_string());
+        (Uin(b.uin), name)
+    }
+}
+
+/// 把瓶子原图逐张追加进 `content`:按 md5 从本地归档读字节发 base64(不依赖协议端可读
+/// bot 的盘,也没有无后缀路径的兼容问题)。读不出(被清理/盘损)不静默吞图:放渐变占位图,
+/// 让看的人知道这里本来有张图;占位图都渲染不出(理论不至)才退回文字。
+async fn push_bottle_images(content: &mut Vec<Segment>, images: &serde_json::Value) {
+    for md5 in image_names(images) {
+        match tokio::fs::read(crate::media::resolve(&md5)).await {
+            Ok(bytes) => {
+                content.push(Segment::image_bytes(bytes));
+                tokio::spawn(crate::media::touch_used(md5)); // 重发即「使用」,刷 last_used
+            }
+            Err(e) => {
+                tracing::warn!(%md5, error = %e, "读漂流瓶图片失败,放占位图");
+                match crate::media::placeholder::missing_image_webp(&md5) {
+                    Ok(webp) => content.push(Segment::image_bytes(webp)),
+                    Err(pe) => {
+                        tracing::warn!(error = %pe, "渲染占位图失败,退回文字");
+                        content.push(Segment::text("〔这里有张图片,但已经失效看不了了〕"));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// 瓶子卡片图:编号(+匿名标)/ 评分·被捞·剩余 / 时间·来源 / 正文 / 操作提示。
@@ -168,7 +190,10 @@ pub fn card_image(b: &bottle::Model, score: Option<f64>) -> anyhow::Result<Vec<u
     d.divider();
     d.paragraph(|p| {
         p.styled(
-            format!("评分:发送「漂流瓶评分 {0} 分数」    评论:发送「漂流瓶评论 {0} 内容」", b.id),
+            format!(
+                "评分:发送「漂流瓶评分 {0} 分数」    评论:发送「漂流瓶评论 {0} 内容」    取原文:回复本条发送「取原文」",
+                b.id
+            ),
             |s| {
                 s.color("#9aa0a8").size(0.8);
             },
@@ -198,7 +223,10 @@ fn card_text(b: &bottle::Model, score: Option<f64>) -> String {
         out.push('\n');
         out.push_str(text);
     }
-    out.push_str(&format!("\n发送「漂流瓶评分 {0} 分数」评分,「漂流瓶评论 {0} 内容」评论", b.id));
+    out.push_str(&format!(
+        "\n发送「漂流瓶评分 {0} 分数」评分,「漂流瓶评论 {0} 内容」评论;回复本条发送「取原文」取出原始内容",
+        b.id
+    ));
     out
 }
 

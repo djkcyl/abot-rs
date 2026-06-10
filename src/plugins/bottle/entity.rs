@@ -1,6 +1,7 @@
-//! 漂流瓶插件**自有**的三张表实体 —— `bottle`（瓶子）/ `bottle_score`（评分）/
-//! `bottle_discuss`（评论）。三者按 `uin`、`bottle_id` 软关联（不建 FK），建表迁移见
-//! [`migration`](super::migration)（经 `PluginMigration` 自注册接入核心 `Migrator`）。
+//! 漂流瓶插件**自有**的四张表实体 —— `bottle`（瓶子）/ `bottle_score`（评分）/
+//! `bottle_discuss`（评论）/ `bottle_sent`（发出的转发消息 → 瓶子映射）。按 `uin`、
+//! `bottle_id` 软关联（不建 FK），建表迁移见 [`migration`](super::migration)
+//! （经 `PluginMigration` 自注册接入核心 `Migrator`）。
 //!
 //! 一表一子模块，各自 `Model` / `Relation` / `ActiveModel`，引用走
 //! `entity::bottle::Model` 等。
@@ -72,6 +73,30 @@ pub mod score {
     }
 
     /// 无外联关系（经 `bottle_id` / `uin` 软关联，不建 FK）。
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// `bottle_sent` 行模型 —— 一条「发出的瓶子转发消息 → 瓶子」映射（「取原文」按回复目标反查）。
+pub mod sent {
+    use sea_orm::entity::prelude::*;
+
+    /// `bottle_sent` 行模型。
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "bottle_sent")]
+    pub struct Model {
+        /// 协议规整后的消息键（OneBot 取 onebot_id、Milky 取 seq，均含会话寻址），见命令层 `msg_key`。
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub msg_key: String,
+        /// 对应瓶子编号（软关联 `bottle.id`）。
+        pub bottle_id: i64,
+        /// 记录时间（库侧 `now()`），懒清理的界。
+        pub created_at: DateTimeWithTimeZone,
+    }
+
+    /// 无外联关系（经 `bottle_id` 软关联，不建 FK）。
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
 

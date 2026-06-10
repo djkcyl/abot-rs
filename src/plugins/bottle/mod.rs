@@ -2,8 +2,9 @@
 //!
 //! 用户把文本与图片装进瓶子丢进「大海」，内容过审核后入池；别人随机捞起一个看，还能评分、评论。
 //! 投放即审：文本走 [`ContentModerator`] 文本审核、图片走图片审核，命中即转人工待审（在网页「审核」页
-//! 处理），否则直接入池。捞瓶/看瓶以合并转发呈现。自有三表 `bottle` / `bottle_score` / `bottle_discuss`，
-//! 数据层见 [`entity`] / [`logic`]，审核接入见 `review`。
+//! 处理），否则直接入池。捞瓶/看瓶以合并转发呈现，发出的转发消息记进 `bottle_sent` 映射——对着它
+//! 回复「取原文」可取出瓶子的原始文字与图片。自有四表 `bottle` / `bottle_score` / `bottle_discuss` /
+//! `bottle_sent`，数据层见 [`entity`] / [`logic`]，审核接入见 `review`。
 
 pub mod entity;
 pub mod images;
@@ -266,7 +267,8 @@ async fn fish(reply: Reply, mut user: AUser, bot: Bot) -> HandlerResult {
 
     logic::record_pickup(&db, bottle.id).await.context("记录打捞")?;
     let forward = render::bottle_forward(&db, &bottle, bot.self_id()).await.context("渲染漂流瓶")?;
-    reply.send(&[forward]).await?;
+    let sent = reply.send(&[forward]).await?;
+    remember_sent(&db, &sent, bottle.id).await;
     Ok(())
 }
 
@@ -327,7 +329,8 @@ async fn check(reply: Reply, user: AUser, bot: Bot, State(master): State<Master>
     }
 
     let forward = render::bottle_forward(&db, &b, bot.self_id()).await.context("渲染漂流瓶")?;
-    reply.send(&[forward]).await?;
+    let sent = reply.send(&[forward]).await?;
+    remember_sent(&db, &sent, b.id).await;
     Ok(())
 }
 
@@ -453,6 +456,74 @@ struct CommentArgs {
     text: String,
 }
 
+/// `漂流瓶原文` / `取原文` —— 取出瓶子的原始文字与图片（合并转发，文字可复制、图片原样重发）。
+///
+/// 两个入口：对着捞瓶/查瓶发出的合并转发**回复**本命令（按回复目标经 `bottle_sent` 映射反查
+/// 瓶子），或直接带编号。可见性同查瓶详情：本人/主人任意状态，他人仅已通过且未删的。
+#[command("漂流瓶原文", "取原文",
+    order = 7,
+    description = "取出瓶子里的原始文字和图片",
+    usage = "对着捞到的瓶子（合并转发）回复「取原文」，或发送「漂流瓶原文 编号」。文字以可复制的原文发出，图片原样重发。")]
+async fn original(
+    reply: Reply,
+    user: AUser,
+    m: MessageEvent,
+    bot: Bot,
+    State(master): State<Master>,
+    args: Args<OriginalArgs>,
+) -> HandlerResult {
+    let db = user.db().clone();
+    let me = user.uin();
+
+    // 定瓶子编号：带编号直接用；否则从回复目标经映射反查（重启前/超期的映射已不在,引导走编号）。
+    let id = match args.0.id {
+        Some(id) => id,
+        None => {
+            let Some(target) = m.content.iter().find_map(|s| match s {
+                Segment::Reply { id, .. } => Some(id.clone()),
+                _ => None,
+            }) else {
+                reply.reply("对着捞到的瓶子回复「取原文」，或发送「漂流瓶原文 编号」").await?;
+                return Ok(());
+            };
+            let bid = match msg_key(&target) {
+                Some(key) => logic::sent_bottle_id(&db, &key).await.context("反查瓶子映射")?,
+                None => None,
+            };
+            let Some(bid) = bid else {
+                reply.reply("不记得这条消息对应哪只瓶子了，试试「漂流瓶原文 编号」").await?;
+                return Ok(());
+            };
+            bid
+        }
+    };
+
+    // 可见性同 `查漂流瓶` 详情：本人/主人任意状态，他人仅已通过且未删；否则当作不存在。
+    let Some(b) = logic::get_bottle(&db, id).await.context("按编号取瓶")? else {
+        reply.reply("没有这个漂流瓶").await?;
+        return Ok(());
+    };
+    let is_owner = b.uin == me;
+    let is_master = master.0.0 != 0 && me == master.0.0;
+    let public = matches!(b.status.as_str(), "approved" | "ai_approved");
+    if b.isdelete || (!is_owner && !is_master && !public) {
+        reply.reply("没有这个漂流瓶").await?;
+        return Ok(());
+    }
+
+    let forward = render::original_forward(&b, bot.self_id()).await;
+    reply.send(&[forward]).await?;
+    Ok(())
+}
+
+/// `漂流瓶原文` 的参数：可选编号（对着瓶子转发回复时可缺）。
+#[derive(Args)]
+struct OriginalArgs {
+    /// 瓶子编号；缺则从回复目标反查。
+    #[arg(name = "编号", desc = "瓶子编号；对着瓶子的合并转发回复时可不填")]
+    id: Option<i64>,
+}
+
 /// 列表单行：`#编号 时间 · 被捞 N(剩 M) · 评分 X · 状态 · 匿名`。`score` 为该瓶去极值均值（无则「无评分」）。
 fn fmt_list_line(b: &entity::bottle::Model, score: Option<f64>) -> String {
     let remaining = if b.remaining_pickups < 0 { "不限".to_string() } else { b.remaining_pickups.to_string() };
@@ -473,6 +544,33 @@ fn fmt_list_line(b: &entity::bottle::Model, score: Option<f64>) -> String {
         line.push_str(" · 匿名");
     }
     line
+}
+
+/// 把 [`MessageId`] 规整成跨协议稳定的查询键：OneBot 取 `onebot_id`、Milky 取 `seq`，均带
+/// 会话寻址。同协议下「发送返回的 id」与「回复段解出的 id」据此落到同一个键上（OneBot 两侧
+/// 都是 `seq=0 + onebot_id`,Milky 两侧都是 `(peer, seq)`）。两者都缺（异常形态）返 `None`。
+fn msg_key(id: &MessageId) -> Option<String> {
+    let scene = match id.peer.scene {
+        Scene::Friend => "f",
+        Scene::Group => "g",
+        Scene::Temp => "t",
+    };
+    if let Some(ob) = id.onebot_id {
+        Some(format!("ob:{scene}:{}:{ob}", id.peer.id))
+    } else if id.seq != 0 {
+        Some(format!("mk:{scene}:{}:{}", id.peer.id, id.seq))
+    } else {
+        None
+    }
+}
+
+/// 把「发出的瓶子转发」消息 id 记进 `bottle_sent` 映射（供「取原文」回复反查）。
+/// 记录失败只打日志——映射丢了还有编号入口兜底，不该影响捞瓶/查瓶主流程。
+async fn remember_sent(db: &sea_orm::DatabaseConnection, sent: &MessageId, bottle_id: i64) {
+    let Some(key) = msg_key(sent) else { return };
+    if let Err(e) = logic::record_sent(db, &key, bottle_id).await {
+        tracing::warn!(error = %e, bottle_id, "记录漂流瓶消息映射失败");
+    }
 }
 
 /// 取发送者显示名：群消息用群名片/昵称，私聊用好友备注/昵称；都取不到为 `None`。
