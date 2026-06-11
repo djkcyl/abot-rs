@@ -8,7 +8,7 @@
 use nagisa::prelude::*;
 use chrono::Local;
 use image::codecs::webp::WebPEncoder;
-use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage, Rgba, RgbaImage};
+use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage};
 use sea_orm::{DatabaseConnection, EntityTrait};
 
 use super::colors::{self, EMPTY};
@@ -27,7 +27,8 @@ const MARK: Rgb<u8> = Rgb([255, 0, 0]); // 放大窗目标格准星
 /// 读出整块画布的调色板索引缓冲(行优先,空格默认 [`EMPTY`] 哨兵 0,渲染为背景白)。
 ///
 /// 只投影 `(x, y, color)` 三列(`select_only` + `into_tuple`),不物化整行 Model(省去 uin/at 反序列化)。
-async fn load_canvas(db: &DatabaseConnection) -> Result<Vec<u8>> {
+/// 对连接泛型:出图传连接、落格事务内存快照传 `&txn` 都走这一个。
+pub(super) async fn load_canvas<C: sea_orm::ConnectionTrait>(db: &C) -> Result<Vec<u8>> {
     use sea_orm::QuerySelect;
     let mut buf = vec![EMPTY; (W * H) as usize];
     let rows: Vec<(i32, i32, i32)> = pixel::Entity::find()
@@ -285,24 +286,4 @@ pub async fn render_clean(db: &DatabaseConnection) -> Result<Vec<u8>> {
     fill_rect(&mut img, bx, by, tw + 2 * pad, th + 2 * pad, Rgb([0, 0, 0]));
     font::draw_text(&mut img, bx + pad, by + pad, &mark, scale, Rgb([255, 255, 255]));
     encode(&img)
-}
-
-/// 一帧 GIF 画面:整块画布纯像素放大成 RGBA(无网格 / 留白),供时间轴回放逐帧编码。
-pub fn frame_rgba(buf: &[u8], cell: u32) -> RgbaImage {
-    let mut img = RgbaImage::from_pixel(W * cell, H * cell, Rgba([255, 255, 255, 255]));
-    for y in 0..H {
-        for x in 0..W {
-            let idx = buf[(y * W + x) as usize];
-            if idx != EMPTY {
-                let [r, g, b] = colors::rgb(idx);
-                let px = Rgba([r, g, b, 255]);
-                for dy in 0..cell {
-                    for dx in 0..cell {
-                        img.put_pixel(x * cell + dx, y * cell + dy, px);
-                    }
-                }
-            }
-        }
-    }
-    img
 }

@@ -18,7 +18,7 @@ use sea_orm::{
 };
 
 use super::colors::EMPTY;
-use super::entity::{history, pixel};
+use super::entity::{history, pixel, replay_cache, snapshot};
 use super::render;
 use crate::data::entity::user;
 use crate::data::user::try_debit_on;
@@ -49,17 +49,165 @@ pub async fn placed_count(db: &DatabaseConnection, uin: i64) -> Result<i64> {
     Ok(n as i64)
 }
 
-/// 按时间范围取落格历史(按 `at` 升序),只要重演用的 `(x, y, new_color)`。`since=None` 即全量。
-pub async fn history_in_range(
+/// 回放取数的单批行数。
+const REPLAY_BATCH: u64 = 10_000;
+
+/// 画布快照间隔:每这么多笔落格存一份 `place_snapshot`。窗口回放从最近快照起步,
+/// 最多再重演这么多笔零头;快照本体 36KB(bytea,库侧自动压缩),存储可忽略。
+pub const SNAPSHOT_EVERY: i64 = 5_000;
+
+/// 取一段历史(按落格次序升序),只要重演用的 `(x, y, new_color)`。
+/// `(after, before)` 是 history id 的开区间界:`after`=0 从头,`before=None` 到尾。
+///
+/// 按 `id` 游标分批拉、`select_only` 三列直接成元组——历史表是追加审计,行数无上界,
+/// 一次 `.all()` 物化完整 Model 在千万行量级是 GB 级内存;分批 + 元组后内存只随结果集
+/// (每行 9 字节)走。`id` 自增,次序即落格次序。
+async fn fetch_strokes(
+    db: &DatabaseConnection,
+    after: i64,
+    before: Option<i64>,
+) -> Result<Vec<(i32, i32, u8)>> {
+    let mut out = Vec::new();
+    let mut cursor = after;
+    loop {
+        let mut q = history::Entity::find()
+            .select_only()
+            .column(history::Column::Id)
+            .column(history::Column::X)
+            .column(history::Column::Y)
+            .column(history::Column::NewColor)
+            .filter(history::Column::Id.gt(cursor))
+            .order_by_asc(history::Column::Id)
+            .limit(REPLAY_BATCH);
+        if let Some(b) = before {
+            q = q.filter(history::Column::Id.lt(b));
+        }
+        let rows: Vec<(i64, i32, i32, i32)> =
+            q.into_tuple().all(db).await.context("查回放历史失败")?;
+        let Some(&(last_id, ..)) = rows.last() else { break };
+        cursor = last_id;
+        out.extend(rows.iter().map(|&(_, x, y, c)| (x, y, c.clamp(1, 32) as u8)));
+        if (rows.len() as u64) < REPLAY_BATCH {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// 把一串笔应用到画布缓冲(越界跳过)。
+fn apply_strokes(buf: &mut [u8], rows: &[(i32, i32, u8)]) {
+    for &(x, y, c) in rows {
+        if (0..render::W as i32).contains(&x) && (0..render::H as i32).contains(&y) {
+            buf[(y as u32 * render::W + x as u32) as usize] = c;
+        }
+    }
+}
+
+/// 回放窗口数据:起点画布(窗口开始时刻的真实画布;全量回放为全空)+ 窗内笔序列。
+pub struct ReplayWindow {
+    /// W×H 索引缓冲,回放首帧。
+    pub base: Vec<u8>,
+    /// 窗内的笔,落格次序。
+    pub rows: Vec<(i32, i32, u8)>,
+}
+
+/// 窗口起点:第一笔 `at >= since` 的 history id;`None` = 窗内没有落格。
+pub async fn window_start_id(
+    db: &DatabaseConnection,
+    since: DateTimeWithTimeZone,
+) -> Result<Option<i64>> {
+    history::Entity::find()
+        .select_only()
+        .column(history::Column::Id)
+        .filter(history::Column::At.gte(since))
+        .order_by_asc(history::Column::At)
+        .limit(1)
+        .into_tuple()
+        .one(db)
+        .await
+        .context("查窗口起点失败")
+}
+
+/// 窗内笔数(id ≥ start 的行数,PK 范围 COUNT)——回放计费的「重量」。
+pub async fn strokes_from(db: &DatabaseConnection, start: i64) -> Result<i64> {
+    let n = history::Entity::find()
+        .filter(history::Column::Id.gte(start))
+        .count(db)
+        .await
+        .context("查窗内笔数失败")?;
+    Ok(n as i64)
+}
+
+/// 回放计费:重量 = 窗内笔数,每 1000 笔 1 币(向上取整),封顶 88。
+pub fn replay_cost(strokes: i64) -> i64 {
+    ((strokes + 999) / 1_000).clamp(1, 88)
+}
+
+/// 取回放窗口数据。`since=None` 全量(空白起步、全部笔);带窗则从最近的画布快照
+/// 恢复出**窗口起点时刻的真实画布**做首帧(最多补演 [`SNAPSHOT_EVERY`] 笔零头),
+/// 窗内笔照常取——回放语义是「画布当时的样子怎么演变到现在」,不是空白上只画窗内笔。
+pub async fn replay_window(
     db: &DatabaseConnection,
     since: Option<DateTimeWithTimeZone>,
-) -> Result<Vec<(i32, i32, u8)>> {
-    let mut q = history::Entity::find().order_by_asc(history::Column::At);
-    if let Some(s) = since {
-        q = q.filter(history::Column::At.gte(s));
-    }
-    let rows = q.all(db).await.context("查回放历史失败")?;
-    Ok(rows.into_iter().map(|r| (r.x, r.y, r.new_color.clamp(1, 32) as u8)).collect())
+) -> Result<ReplayWindow> {
+    let blank = vec![EMPTY; (render::W * render::H) as usize];
+    let Some(s) = since else {
+        return Ok(ReplayWindow { base: blank, rows: fetch_strokes(db, 0, None).await? });
+    };
+    let Some(start) = window_start_id(db, s).await? else {
+        return Ok(ReplayWindow { base: blank, rows: Vec::new() });
+    };
+    // 起点画布 = 最近的水位 < start 的快照 + 补演 (水位, start) 之间的零头。
+    // 快照长度不对(理论不该有)按无快照处理,从零补演。
+    let snap = snapshot::Entity::find()
+        .filter(snapshot::Column::HistoryId.lt(start))
+        .order_by_desc(snapshot::Column::HistoryId)
+        .one(db)
+        .await
+        .context("查画布快照失败")?;
+    let (mut base, watermark) = match snap {
+        Some(s) if s.canvas.len() == blank.len() => (s.canvas, s.history_id),
+        Some(s) => {
+            tracing::warn!(history_id = s.history_id, len = s.canvas.len(), "画布快照长度异常,从零补演");
+            (blank, 0)
+        }
+        None => (blank, 0),
+    };
+    apply_strokes(&mut base, &fetch_strokes(db, watermark, Some(start)).await?);
+    let rows = fetch_strokes(db, start - 1, None).await?;
+    Ok(ReplayWindow { base, rows })
+}
+
+/// 取当日(业务日)的全量回放缓存 GIF。
+pub async fn replay_cache_get(db: &DatabaseConnection) -> Result<Option<Vec<u8>>> {
+    let today = crate::data::util::business_day();
+    let row = replay_cache::Entity::find_by_id(today).one(db).await.context("查回放缓存失败")?;
+    Ok(row.map(|m| m.gif))
+}
+
+/// 落当日全量回放缓存(覆盖),顺手清掉旧日行——表内始终只有当日一行。
+pub async fn replay_cache_put(db: &DatabaseConnection, gif: Vec<u8>) -> Result<()> {
+    use sea_orm::sea_query::OnConflict;
+    let today = crate::data::util::business_day();
+    replay_cache::Entity::insert(replay_cache::ActiveModel {
+        day: Set(today),
+        gif: Set(gif),
+        at: Set(Local::now().fixed_offset()),
+    })
+    .on_conflict(
+        OnConflict::column(replay_cache::Column::Day)
+            .update_columns([replay_cache::Column::Gif, replay_cache::Column::At])
+            .to_owned(),
+    )
+    .exec(db)
+    .await
+    .context("写回放缓存失败")?;
+    replay_cache::Entity::delete_many()
+        .filter(replay_cache::Column::Day.ne(today))
+        .exec(db)
+        .await
+        .context("清旧回放缓存失败")?;
+    Ok(())
 }
 
 /// 某格最近若干次落格(按 `at` 降序,最多 `limit` 条)。供 superuser 查「这格谁画的」。
@@ -227,7 +375,7 @@ pub async fn try_place(
     .await
     .context("upsert 像素失败")?;
 
-    history::ActiveModel {
+    let hist = history::ActiveModel {
         id: NotSet,
         uin: Set(uin),
         group_id: Set(group_id),
@@ -240,6 +388,21 @@ pub async fn try_place(
     .insert(&txn)
     .await
     .context("写落格历史失败")?;
+
+    // 周期画布快照:history id 整除间隔时事务内读真值表存一份(原子:快照在则它的
+    // 历史行必在)。id 序列有回滚空洞,间隔只是近似;并发下可能漏掉一笔 id 更小但尚未
+    // 提交的——影响仅回放底图差一格,且重演按 id 序幂等覆盖,可忽略。
+    if hist.id % SNAPSHOT_EVERY == 0 {
+        let canvas = render::load_canvas(&txn).await?;
+        snapshot::ActiveModel {
+            history_id: Set(hist.id),
+            canvas: Set(canvas),
+            at: Set(now),
+        }
+        .insert(&txn)
+        .await
+        .context("写画布快照失败")?;
+    }
 
     // 扣币已在事务最前完成(带闸),这里只加经验。
     user::Entity::update_many()

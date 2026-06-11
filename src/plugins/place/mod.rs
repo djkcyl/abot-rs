@@ -2,16 +2,16 @@
 //! 往上落像素,几周合作画出一幅集体壁画。
 //!
 //! 设计要点:画布 256×144,32 色调色板;每格按累计落格量缓涨的币价扣费,落格后进冷却
-//! (等级越高越短);画布真值与逐笔审计各落一张插件自有表,渲染/回放都从这两表派生。
+//! (等级越高越短);出图读画布真值表,回放从周期快照 + 逐笔审计派生,全量回放按业务日缓存。
 //!
 //! 模块分工:
 //! - `colors`:32 色调色板(索引↔RGB、名字/别名→索引、文字图例)。
-//! - `entity`:两张插件自有表(`place_pixel` 真值 + `place_history` 审计)。
+//! - `entity`:四张插件自有表(`place_pixel` 真值 + `place_history` 审计 + 画布快照 + 回放缓存)。
 //! - `migration`:建表迁移(经 `PluginMigration` 自注册)。
 //! - `font`:5×7 点阵字(数字 + A–Z,渲染刻度 / 区块号 / 水印,零字体依赖)。
-//! - `render`:全图 / 放大窗 / 区块 / 总览 / 色板 / 干净分享图 / GIF 帧。
-//! - `logic`:冷却 / 币价 / 落格事务 / 历史查询。
-//! - `replay`:时间轴回放 GIF。
+//! - `render`:全图 / 放大窗 / 区块 / 总览 / 色板 / 干净分享图。
+//! - `logic`:冷却 / 币价 / 落格事务 / 历史查询 / 回放窗口与计费 / 缓存。
+//! - `replay`:时间轴回放 GIF(无参走当日缓存免费,带窗现做按量收费)。
 //! - `profile`:个人数据「落格数」战绩(进 mydata)。
 //!
 //! 命令:`画板`(全图 / 放大 / 干净分享图)、`色板`、`作画`(快捷 / 区块导航引导)、`回放`(GIF)。
@@ -111,7 +111,10 @@ async fn place_view(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
     };
     match img {
         Ok(bytes) => reply.msg().image_bytes(bytes).send().await?,
-        Err(e) => reply.reply(format!("画板渲染失败：{e}")).await?,
+        Err(e) => {
+            tracing::warn!(error = %e, "渲染画板失败");
+            reply.reply("画板出图失败了，过会儿再试").await?
+        }
     };
     Ok(())
 }
@@ -124,43 +127,132 @@ async fn place_view(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
 async fn palette(reply: Reply) -> HandlerResult {
     match render::render_palette() {
         Ok(bytes) => reply.msg().image_bytes(bytes).text(colors::legend()).send().await?,
-        Err(e) => reply.reply(format!("色板渲染失败：{e}")).await?,
+        Err(e) => {
+            tracing::warn!(error = %e, "渲染画板色板失败,退回文字图例");
+            reply.reply(colors::legend()).await?
+        }
     };
     Ok(())
 }
 
-/// `画板回放` —— 把画布历程做成 GIF。可选:最近 N 天(`画板回放 7天`/`7d`)、`step=N`、`帧=N`。
+/// `画板回放` —— 画布历程 GIF。无参出**当日缓存**的全量回放(免费,业务日内一份,
+/// 后台日任务预热、缺了首触发现做补上);`N天` 是现做的窗口回放(首帧为窗口起点时刻
+/// 的真实画布),按窗内笔数计费(每 1000 笔 1 币,封顶 88),先报价、y/n 确认再扣。
 #[command("画板回放",
     order = 5,
-    description = "把画板从空白逐笔重演成 GIF",
-    usage = "发送「画板回放」，按时间顺序把画板从空白逐笔重演成 GIF。可加「7天」/「7d」只回放最近几天，\
-「帧=N」指定总帧数（2-60），「step=N」指定每帧合并几次落格，不填则按落格总量自动取。")]
-async fn replay_cmd(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
-    match replay::render_replay(&db, parse_replay_args(args.0.trim())).await? {
-        Some(gif) => reply.msg().image_bytes(gif).send().await?,
-        None => reply.reply("还没有落格记录，画几笔再来回放吧").await?,
+    description = "把画板历程做成 GIF 回放",
+    usage = "发送「画板回放」看全量回放（每天更新一份，免费），最长 30 秒，节奏按落格总量自动调。\
+「画板回放 7天」现做最近 7 天的回放（从当时的画布演变到现在），按量收费：每 1000 笔 1 金币、\
+封顶 88，做之前会报价，回复 y 才扣。")]
+async fn replay_cmd(
+    reply: Reply,
+    Db(db): Db,
+    mut user: AUser,
+    session: Session,
+    args: ArgText,
+) -> HandlerResult {
+    // —— 无参:当日缓存,免费。——
+    let Some(days) = parse_replay_args(args.0.trim()).days else {
+        match replay::full_cached(&db).await? {
+            Some(gif) => reply.msg().image_bytes(gif).send().await?,
+            None => reply.reply("还没有落格记录，画几笔才有回放").await?,
+        };
+        return Ok(());
     };
+
+    // —— 带窗:称重 → 报价 y/n → 带闸扣币 → 现做(失败退款)。——
+    let since = (chrono::Local::now() - chrono::Duration::days(days)).fixed_offset();
+    let Some(start) = logic::window_start_id(&db, since).await? else {
+        reply.reply(format!("最近 {days} 天没有人落格")).await?;
+        return Ok(());
+    };
+    let strokes = logic::strokes_from(&db, start).await?;
+    let cost = logic::replay_cost(strokes);
+    if user.coin() < cost {
+        reply
+            .reply(format!(
+                "这段回放有 {strokes} 笔，现做要 {cost} {COIN_NAME}，你只有 {} {COIN_NAME}",
+                user.coin()
+            ))
+            .await?;
+        return Ok(());
+    }
+    reply
+        .reply(format!(
+            "最近 {days} 天共 {strokes} 笔，现做要 {cost} {COIN_NAME}。回复 y 确认、n 取消"
+        ))
+        .await?;
+    let waiter = session.waiter().from_starter().build();
+    let confirmed = waiter
+        .recv_parse(Duration::from_secs(60), "取消", |s| match s.trim().to_lowercase().as_str() {
+            "y" | "yes" | "是" | "确认" | "嗯" => Ok(true),
+            "n" | "no" | "否" | "不" | "算了" => Ok(false),
+            _ => Err("回复 y 确认、n 取消".to_string()),
+        })
+        .await;
+    match confirmed {
+        Some(true) => {}
+        Some(false) => {
+            reply.reply("行，不做了").await?;
+            return Ok(());
+        }
+        None => {
+            reply.reply("没等到确认，先不做了").await?;
+            return Ok(());
+        }
+    }
+    if !user.pay(cost, "画板回放").await? {
+        reply.reply(format!("余额不够了，要 {cost} {COIN_NAME}")).await?;
+        return Ok(());
+    }
+    match replay::render_replay(&db, replay::ReplayArgs { days: Some(days) }).await {
+        Ok(Some(gif)) => {
+            reply.msg().image_bytes(gif).send().await?;
+        }
+        Ok(None) => {
+            user.add_coin(cost, "画板回放退款").await?;
+            reply.reply("这段时间翻不出落格了，钱退你").await?;
+        }
+        Err(e) => {
+            user.add_coin(cost, "画板回放退款").await?;
+            tracing::warn!(error = %e, "窗口回放生成失败");
+            reply.reply("出图失败了，钱退你，过会儿再试").await?;
+        }
+    }
     Ok(())
 }
 
-/// 解析回放参数:`N天`/`Nd`(最近天数)、`step=N`、`帧=N`/`frames=N`。认得几个算几个,其余忽略。
-fn parse_replay_args(rest: &str) -> replay::ReplayArgs {
-    let (mut days, mut step, mut frames) = (None, None, None);
-    for tok in rest.split_whitespace() {
-        let low = tok.to_lowercase();
-        if let Some(v) = low.strip_prefix("step=").and_then(|s| s.parse().ok()) {
-            step = Some(v);
-        } else if let Some(v) = low
-            .strip_prefix("帧=")
-            .or_else(|| low.strip_prefix("frames="))
-            .and_then(|s| s.parse().ok())
-        {
-            frames = Some(v);
-        } else if let Some(d) = parse_days(&low) {
-            days = Some(d);
-        }
+/// 启动时挂回放缓存的**日预热**任务:先补当日缺份,之后每个业务日界(凌晨 4 点)
+/// 过后 5 分钟重生成——全量回放最重的一次扫描固定摊在凌晨,白天无参触发全走缓存。
+/// `Ready` 每次 run 恰一次;进程级一次闸防多挂。
+#[event(Ready, id = "replay_warm")]
+async fn replay_warm(_r: Ready, Db(db): Db) -> HandlerResult {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return Ok(());
     }
-    replay::ReplayArgs { days, step, frames }
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = replay::warm_cache(&db).await {
+                tracing::warn!(error = %e, "预热回放缓存失败");
+            }
+            let next = crate::data::util::business_day_start()
+                + chrono::Duration::days(1)
+                + chrono::Duration::minutes(5);
+            let wait = (next - chrono::Local::now().fixed_offset())
+                .to_std()
+                .unwrap_or(Duration::from_secs(3600));
+            tokio::time::sleep(wait).await;
+        }
+    });
+    Ok(())
+}
+
+/// 解析回放参数:`N天`/`Nd`(最近天数)。认得就收,其余忽略;节奏不开口子,全自适应。
+fn parse_replay_args(rest: &str) -> replay::ReplayArgs {
+    let days = rest.split_whitespace().find_map(|tok| parse_days(&tok.to_lowercase()));
+    replay::ReplayArgs { days }
 }
 
 /// `7天` / `7d` / `7day` → `Some(7)`;无天数后缀 → `None`。
@@ -478,7 +570,7 @@ async fn finish_place(
             reply.reply(format!("余额不足，这格要 {cost} {COIN_NAME}，你只有 {have}")).await?;
         }
         PlaceResult::Same => {
-            reply.reply(format!("这格已经是{}了，换个颜色或位置吧", colors::name(color))).await?;
+            reply.reply(format!("这格已经是{}了", colors::name(color))).await?;
         }
         PlaceResult::OutOfRange => {
             reply.reply("坐标超出范围（x 0-255，y 0-143）").await?;

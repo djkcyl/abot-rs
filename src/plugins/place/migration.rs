@@ -37,6 +37,24 @@ enum PlaceHistory {
     At,
 }
 
+/// `place_snapshot` 列标识。
+#[derive(DeriveIden)]
+enum PlaceSnapshot {
+    Table,
+    HistoryId,
+    Canvas,
+    At,
+}
+
+/// `place_replay_cache` 列标识。
+#[derive(DeriveIden)]
+enum PlaceReplayCache {
+    Table,
+    Day,
+    Gif,
+    At,
+}
+
 /// 建画板两表的迁移。
 pub struct Migration;
 
@@ -111,8 +129,9 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // (at) 独立索引:`recent_history` 的 `ORDER BY at DESC` 与回放的 `ORDER BY at ASC`
-        // 不带 uin 过滤,复合索引服务不了,append-only 表越长越退化成全表扫 + filesort。
+        // (at) 独立索引:`recent_history` 的 `ORDER BY at DESC` 与回放按天数取窗的
+        // `at >= since` 过滤都不带 uin,复合索引服务不了,append-only 表越长越退化成
+        // 全表扫 + filesort。
         manager
             .create_index(
                 Index::create()
@@ -123,10 +142,73 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // (x, y, at) 索引:`画板历史 x,y` 按格查(filter x,y + ORDER BY at DESC)与
+        // 格子次数 COUNT 用;没有它每次都是全表扫,且这是普通命令就能触发的查询。
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_place_history_xy_at")
+                    .table(PlaceHistory::Table)
+                    .col(PlaceHistory::X)
+                    .col(PlaceHistory::Y)
+                    .col(PlaceHistory::At)
+                    .to_owned(),
+            )
+            .await?;
+
+        // place_snapshot:画布周期快照,主键 = history 水位 id,canvas 为 W×H 索引字节
+        // (bytea,PG TOAST 自动压缩)。窗口回放从最近快照起步,不必从零重演。
+        manager
+            .create_table(
+                Table::create()
+                    .table(PlaceSnapshot::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(PlaceSnapshot::HistoryId)
+                            .big_integer()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(PlaceSnapshot::Canvas).binary().not_null())
+                    .col(
+                        ColumnDef::new(PlaceSnapshot::At)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // place_replay_cache:全量回放 GIF 的当日缓存,业务日为主键,旧日行随写随清,
+        // 表内始终只有当日一行。
+        manager
+            .create_table(
+                Table::create()
+                    .table(PlaceReplayCache::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(PlaceReplayCache::Day).date().not_null().primary_key())
+                    .col(ColumnDef::new(PlaceReplayCache::Gif).binary().not_null())
+                    .col(
+                        ColumnDef::new(PlaceReplayCache::At)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(Table::drop().table(PlaceReplayCache::Table).if_exists().to_owned())
+            .await?;
+        manager
+            .drop_table(Table::drop().table(PlaceSnapshot::Table).if_exists().to_owned())
+            .await?;
         manager
             .drop_table(Table::drop().table(PlaceHistory::Table).if_exists().to_owned())
             .await?;
