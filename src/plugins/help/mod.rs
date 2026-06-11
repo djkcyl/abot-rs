@@ -4,11 +4,11 @@
 //! 收集,本命令据此分组、跳过 `hidden` 的后台插件、展开每个插件下的命令与别名。新插件/新命令加进来
 //! 即自动出现,无需改本文件。
 //!
-//! - `help`(空参):按 [`CATEGORY_ORDER`] 分组,每个插件列「名字 —— 简介」,末尾给一句怎么看详情的提示。
+//! - `help`(空参):按 `CATEGORY_ORDER` 分组,每个插件列「名字 —— 简介」,末尾给一句怎么看详情的提示。
 //! - `help 功能名` / `help 命令`:先按命令词/命令名/命令 id 命中(命中则展开它所属的整个插件),
 //!   再按插件名/插件 key 命中;都没中就回一句「没找到」。展开时逐条列出命令的主词、别名、简介与用法。
 //!
-//! 正文构造做成纯函数 [`render_overview`] / [`render_detail`],handler 只负责切节点 + 合并转发发送,
+//! 正文构造做成纯函数 `render_overview` / `render_detail`,handler 只负责切节点 + 合并转发发送,
 //! 便于在不发 QQ 消息的前提下核对输出。
 
 use nagisa::prelude::*;
@@ -70,7 +70,7 @@ async fn help(
 
     // 详情:正文(每条命令一块)与标题各自解析(同一份命中规则,标题取所属插件名 + 「· 用法」)。
     let Some(blocks) = render_detail(target, &plugins, &triggers, &enabled, peer) else {
-        reply.reply(format!("没找到「{target}」，发送 help 看全部功能。")).await?;
+        reply.reply("没找到这个功能，发送 help 看全部功能。").await?;
         return Ok(());
     };
     let title = detail_title(target, &plugins, &triggers).unwrap_or_else(|| "用法".to_string());

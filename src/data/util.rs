@@ -1,7 +1,7 @@
 //! 数据层小工具 —— 与具体表无关的通用助手。
 //!
 //! - [`get_or_insert`] —— 把「按主键取，缺则插一行默认值，并发撞主键时回读」这套
-//!   get-or-create 模式抽成一个泛型函数,各处共用(`AUser::get` / 签到行 …),行为不变。
+//!   get-or-create 模式抽成一个泛型函数,各处共用(`AUser::get` / `AGroup::get` …)。
 //! - [`business_day`] / [`business_day_start`] —— 全 bot 统一的「每日重置」口径(凌晨 4 点)。
 
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveTime};

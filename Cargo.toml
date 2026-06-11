@@ -16,11 +16,12 @@ bytes = "1.11.1"
 chrono = "0.4.45"
 dotenvy = "0.15.7"
 futures = "0.3.32"
+gif = "0.14.2"
 hex = "0.4.3"
 hmac = "0.13.0"
 image = { version = "0.25.5", default-features = false, features = ["png", "gif", "jpeg", "webp"] }
 md5 = "0.7.0"
-nagisa = { version = "0.4", default-features = false, features = ["log", "onebot", "render"] }
+nagisa = { version = "0.5", default-features = false, features = ["log", "onebot", "render"] }
 rand = "0.10.1"
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls"] }
 rqrr = "0.10.1"
@@ -34,12 +35,6 @@ sha2 = "0.11.0"
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "sync"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-
-# 内置字体是 zstd 压缩的,解压走 ruzstd;dev 构建里也让它跑 O3,否则首次渲染要多等几秒。
-[profile.dev.package.ruzstd]
-opt-level = 3
-[profile.dev.package.twox-hash]
-opt-level = 3
 
 # 开发期:把 nagisa 指到本地工作树以联调框架改动。发布/合并前撤回本段并改回 crates.io 版。
 [patch.crates-io]

@@ -36,6 +36,8 @@ const THROW_BASE: i64 = 2;
 const THROW_PER_TEXT: i64 = 1;
 /// 每张图片额外花费。
 const THROW_PER_IMAGE: i64 = 3;
+/// 单只瓶子的图片张数上限(整卡渲染、逐图审核、转发体积都受着,不能不设防)。
+const MAX_IMAGES: usize = 3;
 /// 打捞花费。
 const FISH_COST: i64 = 3;
 /// 删除（回收）退款。
@@ -69,7 +71,7 @@ struct ThrowArgs {
 #[command("丢漂流瓶", "扔漂流瓶",
     order = 1,
     description = "把文字或图片装进瓶子丢进大海",
-    usage = "花费 2 币起，含文字加 1、每张图加 3；投放前会把花费报给你、回 y 确认才扣。投放后过内容审核，命中关键词的转人工待审。")]
+    usage = "花费 2 币起，含文字加 1、每张图加 3，图片最多 3 张；投放前会把花费报给你、回 y 确认才扣。投放后过内容审核，命中关键词的转人工待审。")]
 async fn throw(
     reply: Reply,
     mut user: AUser,
@@ -79,7 +81,7 @@ async fn throw(
 ) -> HandlerResult {
     // 防并发：同一个人同时只能跑一条投放流程（`-p` 会等后续消息，必须串行化），守卫持到流程结束。
     let Some(_guard) = session.single_flight_user() else {
-        reply.reply("你正在投放流程中，先发完或等它超时吧").await?;
+        reply.reply("上一个投放还没结束，先把那边弄完").await?;
         return Ok(());
     };
 
@@ -101,16 +103,29 @@ async fn throw(
     let waiter = session.waiter().from_starter().build();
     let mut images = Vec::new();
     if pic {
-        reply.reply("好的，把要放进瓶子的图片发给我吧（可多张，发完发「好了」，放弃发「取消」）").await?;
+        reply.reply(format!("把图片发我（最多 {MAX_IMAGES} 张），发完了说「好了」，不想丢就发「取消」")).await?;
+        // 多选发图客户端常拆成一图一条连发,逐条应答会刷屏——首批即时应一句,
+        // 连发期间静默,停止来图 4 秒后把累计数一次应掉(尾随防抖:recv 的超时
+        // 参数当定时器,有未应答的图就短等,流程总超时仍是两分钟没动静)。
+        let mut acked = 0usize;
         loop {
-            let Some(next) = waiter.recv::<MessageEvent>(std::time::Duration::from_secs(120)).await else {
-                reply.reply("等太久了，这次先不丢了").await?;
+            let pending = images.len() > acked;
+            let wait = std::time::Duration::from_secs(if pending { 4 } else { 120 });
+            let Some(next) = waiter.recv::<MessageEvent>(wait).await else {
+                if pending {
+                    reply
+                        .reply(format!("已收到 {} 张，继续发或发「好了」", images.len()))
+                        .await?;
+                    acked = images.len();
+                    continue;
+                }
+                reply.reply("等了两分钟没等到图，这次先不丢了").await?;
                 return Ok(());
             };
             let next_text = next.content.extract_text();
             let next_text = next_text.trim();
             if next_text == "取消" {
-                reply.reply("已取消").await?;
+                reply.reply("行，不丢了").await?;
                 return Ok(());
             }
             if matches!(next_text, "好了" | "完成" | "发完了") || next_text.eq_ignore_ascii_case("ok") {
@@ -118,9 +133,27 @@ async fn throw(
             }
             let imgs = images::fetch_and_store(&next.content).await;
             if !imgs.is_empty() {
-                let n = imgs.len();
                 images.extend(imgs);
-                reply.reply(format!("收到 {n} 张，继续发或发「好了」")).await?;
+                // 满员即收口,直接进投放确认;超出的不收。
+                if images.len() >= MAX_IMAGES {
+                    let over = images.len() > MAX_IMAGES;
+                    images.truncate(MAX_IMAGES);
+                    reply
+                        .reply(if over {
+                            format!("图片最多 {MAX_IMAGES} 张，多的没收，开始投放")
+                        } else {
+                            format!("已收到 {MAX_IMAGES} 张，到上限了，开始投放")
+                        })
+                        .await?;
+                    break;
+                }
+                // 静默期的首批即时应一句;连发中的后续批次留给尾随防抖归并。
+                if acked == 0 {
+                    reply
+                        .reply(format!("已收到 {} 张，继续发或发「好了」", images.len()))
+                        .await?;
+                    acked = images.len();
+                }
             } else if !next_text.is_empty() && text.is_empty() {
                 // 没图但有文字，且瓶子还没文本 → 当作瓶子文本收下。
                 text = next_text.to_string();
@@ -132,11 +165,15 @@ async fn throw(
     } else {
         // 非交互：图片只从触发消息里取（逐张下载落盘，顺带拿字节喂审核）。
         images = images::fetch_and_store(&m.content).await;
+        if images.len() > MAX_IMAGES {
+            images.truncate(MAX_IMAGES);
+            reply.reply(format!("图片最多 {MAX_IMAGES} 张，多的没收")).await?;
+        }
     }
 
     let has_text = !text.is_empty();
     if !has_text && images.is_empty() {
-        reply.reply("瓶子里总得装点什么吧，写句话或配张图").await?;
+        reply.reply("瓶子还空着，写句话或配张图").await?;
         return Ok(());
     }
 
@@ -144,7 +181,7 @@ async fn throw(
     let cost = THROW_BASE + if has_text { THROW_PER_TEXT } else { 0 } + THROW_PER_IMAGE * images.len() as i64;
     if user.coin() < cost {
         reply
-            .reply(format!("投放这个瓶子要 {cost} {COIN_NAME}，你只有 {} {COIN_NAME}，不够呢", user.coin()))
+            .reply(format!("投放要 {cost} {COIN_NAME}，你只有 {}，不够", user.coin()))
             .await?;
         return Ok(());
     }
@@ -169,11 +206,11 @@ async fn throw(
     match confirmed {
         Some(true) => {}
         Some(false) => {
-            reply.reply("那这个瓶子先不丢了").await?;
+            reply.reply("行，不丢了").await?;
             return Ok(());
         }
         None => {
-            reply.reply("没等到确认，这次先不丢了").await?;
+            reply.reply("等了一分钟没等到确认，先不丢了").await?;
             return Ok(());
         }
     }
@@ -254,7 +291,7 @@ async fn fish(reply: Reply, mut user: AUser, bot: Bot) -> HandlerResult {
     let db = user.db().clone();
 
     let Some(bottle) = logic::select_candidate(&db).await.context("挑选可捞的瓶子")? else {
-        reply.reply("大海里暂时没有漂流瓶……过会儿再来吧").await?;
+        reply.reply("大海里暂时没有漂流瓶，过会儿再来看看").await?;
         return Ok(());
     };
 
@@ -266,7 +303,7 @@ async fn fish(reply: Reply, mut user: AUser, bot: Bot) -> HandlerResult {
     }
 
     logic::record_pickup(&db, bottle.id).await.context("记录打捞")?;
-    let forward = render::bottle_forward(&db, &bottle, bot.self_id()).await.context("渲染漂流瓶")?;
+    let forward = render::bottle_forward(&db, &bottle, bot.self_id(), &user.render_theme()).await.context("渲染漂流瓶")?;
     // 先回一句打捞成功(群里 @ 捞的人),合并转发紧随其后——光秃秃一张转发卡不知道发生了什么。
     let hail = format!("成功捞起一只漂流瓶,编号 {}", bottle.id);
     if reply.peer().is_group() {
@@ -301,7 +338,7 @@ async fn check(reply: Reply, user: AUser, bot: Bot, State(master): State<Master>
         // 批量取这批瓶子的评分（一次查询）,渲成表格图;渲染失败退回逐行文字（chunk_items）。
         let ids: Vec<i64> = rows.iter().map(|b| b.id).collect();
         let scores = logic::score_avgs(&db, &ids).await.context("取漂流瓶评分")?;
-        let nodes = match render::list_image(&rows, &scores) {
+        let nodes = match render::list_image(&rows, &scores, &user.render_theme()) {
             Ok(webp) => {
                 vec![ForwardNode::new(bot.self_id(), "我的漂流瓶", vec![Segment::image_bytes(webp)])]
             }
@@ -335,7 +372,7 @@ async fn check(reply: Reply, user: AUser, bot: Bot, State(master): State<Master>
         return Ok(());
     }
 
-    let forward = render::bottle_forward(&db, &b, bot.self_id()).await.context("渲染漂流瓶")?;
+    let forward = render::bottle_forward(&db, &b, bot.self_id(), &user.render_theme()).await.context("渲染漂流瓶")?;
     let sent = reply.send(&[forward]).await?;
     remember_sent(&db, &sent, b.id).await;
     Ok(())
@@ -446,7 +483,7 @@ async fn comment(reply: Reply, user: AUser, m: MessageEvent, args: Args<CommentA
             reply.reply(format!("已评论漂流瓶 {id}")).await?;
         }
         DiscussOutcome::LimitReached => {
-            reply.reply("你对这个漂流瓶已经评论 3 条啦").await?;
+            reply.reply("你对这个漂流瓶已经评论了 3 条，到上限了").await?;
         }
     }
     Ok(())

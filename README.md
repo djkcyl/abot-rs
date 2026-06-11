@@ -26,7 +26,7 @@ pnpm -C web install && pnpm -C web build
 
 ## 代码
 
-一个目录一个插件，都在 [`src/plugins/`](src/plugins/)；插件自带建表迁移，由核心统一收集。无测试，门禁是 `cargo build` + `cargo clippy --all-targets -- -D warnings`。
+一个目录一个插件，都在 [`src/plugins/`](src/plugins/)；插件自带建表迁移，由核心统一收集。无测试，门禁是 `cargo build` + `cargo clippy --all-targets -- -D warnings` + `cargo doc --no-deps` 零警告。
 
 ## License
 

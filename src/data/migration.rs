@@ -60,10 +60,13 @@ mod m20260610_000001_create_core {
     enum User {
         Table,
         Uin,
+        Id,
         Coin,
         Nickname,
         Exp,
         Banned,
+        Theme,
+        ThemeColor,
         JoinTime,
     }
 
@@ -83,6 +86,7 @@ mod m20260610_000001_create_core {
         Id,
         Uin,
         Delta,
+        Balance,
         Reason,
         At,
     }
@@ -114,6 +118,15 @@ mod m20260610_000001_create_core {
                                 .not_null()
                                 .primary_key(),
                         )
+                        // 站内 UID:自增注册序号(BIGSERIAL,唯一)。主键仍是 uin(上游事件
+                        // 按 QQ 号寻人),这列供呈现——卡片等处显示比 QQ 号短的站内编号。
+                        .col(
+                            ColumnDef::new(User::Id)
+                                .big_integer()
+                                .not_null()
+                                .auto_increment()
+                                .unique_key(),
+                        )
                         .col(
                             ColumnDef::new(User::Coin)
                                 .big_integer()
@@ -127,6 +140,21 @@ mod m20260610_000001_create_core {
                                 .boolean()
                                 .not_null()
                                 .default(false),
+                        )
+                        // 出图亮暗偏好:auto(按日出日落)/ light / dark,经「主题」命令改。
+                        .col(
+                            ColumnDef::new(User::Theme)
+                                .string()
+                                .not_null()
+                                .default("auto"),
+                        )
+                        // 出图主题色:五套预设之一的键(imaging::THEMES),空串走缺省远黛蓝,
+                        // 经「主题」命令改。
+                        .col(
+                            ColumnDef::new(User::ThemeColor)
+                                .string()
+                                .not_null()
+                                .default(""),
                         )
                         .col(
                             ColumnDef::new(User::JoinTime)
@@ -166,8 +194,9 @@ mod m20260610_000001_create_core {
                 )
                 .await?;
 
-            // coin_log：自增主键 id（BIGSERIAL），uin/delta 带符号 i64，reason 文本，
-            // at 默认 now()。追加式，无外键。
+            // coin_log：自增主键 id（BIGSERIAL），uin/delta/balance 带符号 i64（balance =
+            // 本笔落账后余额，原子 UPDATE 的 RETURNING 取回），reason 文本，at 默认 now()。
+            // 追加式，无外键。
             manager
                 .create_table(
                     Table::create()
@@ -182,6 +211,7 @@ mod m20260610_000001_create_core {
                         )
                         .col(ColumnDef::new(CoinLog::Uin).big_integer().not_null())
                         .col(ColumnDef::new(CoinLog::Delta).big_integer().not_null())
+                        .col(ColumnDef::new(CoinLog::Balance).big_integer().not_null())
                         .col(ColumnDef::new(CoinLog::Reason).string().not_null())
                         .col(
                             ColumnDef::new(CoinLog::At)

@@ -9,7 +9,7 @@
 //! 2. **所有值参数化**,从不拼接;走 `Statement::from_sql_and_values`,占位符 `$N`。
 //! 3. 值统一**按文本或 NULL 绑定**,SQL 里把占位符 cast 到该列真实 Postgres 类型(`$1::int8`、
 //!    `$2::jsonb`、`$3::timestamptz`),由 Postgres 自行把文本解析成对应类型。
-//! 4. 筛选算子、排序方向取自固定白名单;limit 夹到 [1,200],offset≥0。
+//! 4. 筛选算子、排序方向取自固定白名单;limit 夹到 1..=200,offset≥0。
 
 use nagisa::async_trait;
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement, Value as SqlValue};

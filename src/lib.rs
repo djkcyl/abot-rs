@@ -3,24 +3,15 @@
 //! abot 只依赖 `nagisa` 门面（onebot + log 特性），数据走 sea-orm + Postgres。
 //! （abot 不写测试:门禁 = build + clippy,验证靠真机连线跑。）
 
+// 各模块自带 `//!` 文档;这里不再叠外层简介——rustdoc 会把两层拼接后按本作用域解析
+// 内层链接,既报「不在 scope」又丢行号。
 pub mod config;
 pub mod data;
-
-/// 出图字体栈:框架内置黑体/等宽 + abot 自备宋体/楷体(详见 `fonts::handle`)。
 pub mod fonts;
-
-/// 出图公共底座:统一 RenderOptions(字体栈 + WebP + 页脚项目水印)与启动预热(详见 `imaging`)。
 pub mod imaging;
-
-/// 顶层图片缓存服务:收图登记 + 队列下载 + 分片归档,插件经 `wait` 等图就绪(详见 `media`)。
 pub mod media;
-
-/// crate 级内容审核器:腾讯云 AI 主、本地关键词/二维码兜底(详见 `moderation::ContentModerator`)。
 pub mod moderation;
-
 pub mod plugins;
-
-/// 插件 WebUI 地基:进程内 axum 控制台(详见 `web::ConsoleService`)。
 pub mod web;
 
 /// 游戏货币名 —— **整个 abot 的全局设计常量**，单一来源。

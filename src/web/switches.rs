@@ -1,6 +1,6 @@
 //! 插件开关的持久化 —— 把 `EnabledSet` 的覆盖快照存进 `setting` 表的专用一行。
 //!
-//! 用一行 `(plugin_key="__switches__", key="enabled")` 存整份 [`EnabledOverrides`](nagisa::EnabledOverrides)
+//! 用一行 `(plugin_key="__switches__", key="enabled")` 存整份 [`nagisa::EnabledOverrides`]
 //! 的 jsonb。`main` 启动时 [`load_overrides`] 读出装入 app;控制台插件页改开关后 [`store_overrides`]
 //! 写回。读不到或反序列化失败都退回空覆盖(全按各插件 `default_enable`)。
 

@@ -1,6 +1,6 @@
 //! 漂流瓶插件**自有**的四张表实体 —— `bottle`（瓶子）/ `bottle_score`（评分）/
 //! `bottle_discuss`（评论）/ `bottle_sent`（发出的转发消息 → 瓶子映射）。按 `uin`、
-//! `bottle_id` 软关联（不建 FK），建表迁移见 [`migration`](super::migration)
+//! `bottle_id` 软关联（不建 FK），建表迁移见本插件 `migration` 模块
 //! （经 `PluginMigration` 自注册接入核心 `Migrator`）。
 //!
 //! 一表一子模块，各自 `Model` / `Relation` / `ActiveModel`，引用走

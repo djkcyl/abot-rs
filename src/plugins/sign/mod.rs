@@ -1,10 +1,11 @@
-//! 签到插件 —— 每日签到命令 `签到` / `sign`，**自带数据 + 逻辑**。
+//! 签到插件 —— 每日签到命令 `签到` / `sign` 与月历 `签到日历`，**自带数据 + 逻辑**。
 //!
 //! 「插件自有数据」约定的样板：
-//! - [`entity`] 定义本插件私有的 `sign` 表（与核心 `user` 表分离，按 `uin` 软关联）；
+//! - [`entity`] 定义本插件私有的 `sign_log` 表（每日一行流水，签到数据的**单一真相**——
+//!   去重 / 连签 / 累计 / 日历全由它派生，不设汇总行；与核心 `user` 表分离，按 `uin` 软关联）；
 //! - [`migration`] 建该表，经 `PluginMigration` + `nagisa::inventory` **自注册**接入核心
 //!   `Migrator`（核心不感知本插件）；
-//! - [`logic`] 放连签结算逻辑（不在核心 `AUser` 上），触碰共享经济只走 `AUser::add_coin`。
+//! - [`logic`] 放派生结算逻辑（不在核心 `AUser` 上），触碰共享经济只走 `AUser::add_coin`。
 //!
 //! 本文件只做薄壳：命令词经 `#[command]` + `inventory` 自动注册，`AUser` / `Reply` 作为
 //! 提取器由 dispatch 注入，handler 取发送者句柄（连接经 `user.db()` 拿，不另取 `Db`）→
@@ -61,9 +62,6 @@ async fn sign(reply: Reply, mut user: AUser, m: MessageEvent) -> HandlerResult {
 
     let SignOutcome::Done {
         gold_add,
-        base,
-        streak_bonus,
-        luck,
         continue_sign,
         total_sign,
         milestone,
@@ -72,32 +70,20 @@ async fn sign(reply: Reply, mut user: AUser, m: MessageEvent) -> HandlerResult {
         exp_gain,
         level_change,
         level_info,
+        ..
     } = outcome
     else {
         reply.reply(format!("{greet}，今天已经签到过了，凌晨 4 点后再来")).await?;
         return Ok(());
     };
 
-    // 显示名：群名片/昵称，私聊好友备注/昵称；都取不到用 QQ 号串。
-    let name = m
-        .member
-        .as_ref()
-        .map(|mi| mi.display_name())
-        .or_else(|| m.friend.as_ref().map(|f| f.display_name()))
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| user.uin().to_string());
-
     let card = render::SignCard {
-        name,
+        name: display_name(&m, user.uin()),
+        uid: user.id(),
         uin: user.uin(),
         avatar: crate::imaging::qq_avatar(user.uin()).await,
         greet,
         gold_add,
-        base,
-        streak_bonus,
-        luck,
         milestone,
         first_sign,
         jackpot,
@@ -107,6 +93,7 @@ async fn sign(reply: Reply, mut user: AUser, m: MessageEvent) -> HandlerResult {
         continue_sign,
         total_sign,
         balance: user.coin(),
+        theme: user.render_theme(),
     };
     match render::card_image(&card) {
         Ok(webp) => {
@@ -118,6 +105,73 @@ async fn sign(reply: Reply, mut user: AUser, m: MessageEvent) -> HandlerResult {
         }
     }
     Ok(())
+}
+
+/// `签到日历` → 本月签到月历卡(业务日口径,凌晨 4 点前算前一天)。
+///
+/// 查 [`logic::calendar_data`](当月 `sign_log` + 汇总行)→ [`render::calendar_image`]
+/// 渲月历图引用回复;渲染失败退一行文字(签过的日子序列)。没签过也出图(空日历)。
+#[command("签到日历",
+    description = "看本月签到日历",
+    usage = "发送「签到日历」，看本月哪些天签了到。凌晨 4 点前签的算前一天。")]
+async fn calendar(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
+    use chrono::Datelike;
+
+    let today = crate::data::util::business_day();
+    let data =
+        logic::calendar_data(user.db(), user.uin(), today.year(), today.month(), today).await?;
+    let month_days: Vec<u32> = data.days.iter().map(|d| d.day()).collect();
+
+    let card = render::CalendarCard {
+        name: display_name(&m, user.uin()),
+        uid: user.id(),
+        uin: user.uin(),
+        avatar: crate::imaging::qq_avatar(user.uin()).await,
+        year: today.year(),
+        month: today.month(),
+        days: month_days.iter().copied().collect(),
+        today: Some(today.day()),
+        continue_sign: data.continue_sign,
+        total_sign: data.total_sign,
+        theme: user.render_theme(),
+    };
+    match render::calendar_image(&card) {
+        Ok(webp) => {
+            reply.msg().image_bytes(webp).quote().await?;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "渲染签到日历失败,退回文字");
+            let listed = if month_days.is_empty() {
+                "这个月还没签过到".to_string()
+            } else {
+                let days =
+                    month_days.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("、");
+                format!("签了 {} 天:{} 号", month_days.len(), days)
+            };
+            reply
+                .reply(format!(
+                    "{} 年 {} 月,{listed};连签 {} 天,累计 {} 次",
+                    today.year(),
+                    today.month(),
+                    data.continue_sign,
+                    data.total_sign
+                ))
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+/// 发送者显示名：群名片/昵称，私聊好友备注/昵称；都取不到用 QQ 号串。
+fn display_name(m: &MessageEvent, uin: i64) -> String {
+    m.member
+        .as_ref()
+        .map(|mi| mi.display_name())
+        .or_else(|| m.friend.as_ref().map(|f| f.display_name()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| uin.to_string())
 }
 
 /// 卡片的文字退路(渲染失败时用,信息同卡片)。

@@ -40,6 +40,51 @@ impl AUser {
         self.model.uin
     }
 
+    /// 站内 UID（自增注册序号，唯一）。呈现用；寻人一律仍按 `uin`。
+    pub fn id(&self) -> i64 {
+        self.model.id
+    }
+
+    /// 出图亮暗偏好（`auto` / `light` / `dark`）。出图点经
+    /// [`imaging::pick_dark`](crate::imaging::pick_dark) 解析成本次亮暗。
+    pub fn theme(&self) -> &str {
+        &self.model.theme
+    }
+
+    /// 改出图亮暗偏好（调用方先校验取值，这里原样落库并同步 `self.model`）。
+    pub async fn set_theme(&mut self, theme: &str) -> Result<()> {
+        user::Entity::update_many()
+            .col_expr(user::Column::Theme, Expr::value(theme))
+            .filter(user::Column::Uin.eq(self.model.uin))
+            .exec(&self.db)
+            .await
+            .context("写主题偏好失败")?;
+        self.model.theme = theme.to_string();
+        Ok(())
+    }
+
+    /// 出图主题色偏好（五套预设之一的键，空串 = 缺省远黛蓝）。
+    pub fn theme_color(&self) -> &str {
+        &self.model.theme_color
+    }
+
+    /// 改出图主题色偏好（调用方先归一成主题键或空串，这里原样落库并同步 `self.model`）。
+    pub async fn set_theme_color(&mut self, color: &str) -> Result<()> {
+        user::Entity::update_many()
+            .col_expr(user::Column::ThemeColor, Expr::value(color))
+            .filter(user::Column::Uin.eq(self.model.uin))
+            .exec(&self.db)
+            .await
+            .context("写主题色偏好失败")?;
+        self.model.theme_color = color.to_string();
+        Ok(())
+    }
+
+    /// 把主题偏好（亮暗 + 主题色）一次解析成本次出图主题（标准色卡），渲染端直接用。
+    pub fn render_theme(&self) -> crate::imaging::UserTheme {
+        crate::imaging::UserTheme::resolve(self.theme(), self.theme_color())
+    }
+
     /// 当前金币余额（`self.model` 侧的值，经各写方法与库保持同步）。
     pub fn coin(&self) -> i64 {
         self.model.coin
@@ -217,19 +262,22 @@ pub(crate) async fn add_coin_on<C: ConnectionTrait>(
     delta: i64,
     reason: String,
 ) -> Result<()> {
-    let res = user::Entity::update_many()
+    // RETURNING 取回同一条原子更新后的整行——流水的 balance 与 delta 严格对应,
+    // 不另查一遍(并发下另查会读到别笔变动后的值)。
+    let rows = user::Entity::update_many()
         .col_expr(user::Column::Coin, Expr::col(user::Column::Coin).add(delta))
         .filter(user::Column::Uin.eq(uin))
-        .exec(conn)
+        .exec_with_returning(conn)
         .await
         .context("原子加币")?;
-    if res.rows_affected == 0 {
+    let Some(row) = rows.first() else {
         return Err(Error::action(format!("加币目标用户 {uin} 不存在，未落账")));
-    }
+    };
     coin_log::ActiveModel {
         id: NotSet,
         uin: Set(uin),
         delta: Set(delta),
+        balance: Set(row.coin),
         reason: Set(reason),
         at: NotSet,
     }
@@ -251,20 +299,22 @@ pub(crate) async fn try_debit_on<C: ConnectionTrait>(
     reason: String,
 ) -> Result<bool> {
     debug_assert!(amount >= 0, "try_debit_on 的 amount 应非负");
-    let res = user::Entity::update_many()
+    // RETURNING 同 add_coin_on:扣款后余额随同一条原子更新取回,进流水的 balance。
+    let rows = user::Entity::update_many()
         .col_expr(user::Column::Coin, Expr::col(user::Column::Coin).sub(amount))
         .filter(user::Column::Uin.eq(uin))
         .filter(user::Column::Coin.gte(amount))
-        .exec(conn)
+        .exec_with_returning(conn)
         .await
         .context("带闸扣款")?;
-    if res.rows_affected == 0 {
+    let Some(row) = rows.first() else {
         return Ok(false); // 余额不足（或用户不存在）——未扣、未记账
-    }
+    };
     coin_log::ActiveModel {
         id: NotSet,
         uin: Set(uin),
         delta: Set(-amount),
+        balance: Set(row.coin),
         reason: Set(reason),
         at: NotSet,
     }
@@ -278,10 +328,13 @@ pub(crate) async fn try_debit_on<C: ConnectionTrait>(
 fn default_active() -> user::ActiveModel {
     user::ActiveModel {
         uin: NotSet,
+        id: NotSet, // 站内 UID 由库侧序列发号
         coin: NotSet,
         nickname: NotSet,
         exp: NotSet,
         banned: NotSet,
+        theme: NotSet,
+        theme_color: NotSet,
         join_time: NotSet,
     }
 }

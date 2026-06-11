@@ -125,7 +125,7 @@ fn trimmed_mean(scores: &[i16]) -> Option<f64> {
     Some((avg * 10.0).round() / 10.0)
 }
 
-/// 去极值均值评分：取该瓶全部评分按值升序后走 [`trimmed_mean`]。
+/// 去极值均值评分：取该瓶全部评分按值升序后走 `trimmed_mean`。
 pub async fn score_avg(db: &DatabaseConnection, bottle_id: i64) -> anyhow::Result<Option<f64>> {
     let scores: Vec<i16> = score::Entity::find()
         .filter(score::Column::BottleId.eq(bottle_id))

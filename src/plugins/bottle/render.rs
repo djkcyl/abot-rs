@@ -11,6 +11,8 @@
 use nagisa::prelude::*;
 use sea_orm::DatabaseConnection;
 
+use crate::imaging::UserTheme;
+
 use super::entity::{bottle, discuss};
 use super::logic;
 
@@ -21,10 +23,10 @@ const COMMENTS_PAGE_MAX_PX: u32 = 4000;
 /// 量高分页失败时的退路:固定每页楼数。
 const COMMENTS_PER_IMAGE_FALLBACK: usize = 10;
 
-/// 出图公共选项:公共底座(字体栈 / WebP / 页脚项目水印)+ 本插件的边距口径。
-fn render_opts() -> nagisa::render::RenderOptions {
+/// 出图公共选项:用户主题底座(色卡 / 亮暗 / 底栏色带)+ 本插件的边距口径。
+fn render_opts(t: &UserTheme) -> nagisa::render::RenderOptions {
     use nagisa::render::Insets;
-    crate::imaging::render_opts().with_padding(Insets::symmetric(36.0, 40.0))
+    t.opts().with_padding(Insets::symmetric(36.0, 40.0))
 }
 
 /// 把一只瓶子渲染成合并转发。
@@ -35,6 +37,7 @@ pub async fn bottle_forward(
     db: &DatabaseConnection,
     b: &bottle::Model,
     self_id: Uin,
+    t: &UserTheme,
 ) -> anyhow::Result<Segment> {
     let score = logic::score_avg(db, b.id).await?;
     let comments = logic::get_discuss(db, b.id).await?;
@@ -46,7 +49,7 @@ pub async fn bottle_forward(
     //    卡渲不出退「文字卡片 + 原图逐段」(动图已在其中,不再补发)。——
     let images = load_bottle_images(&b.images).await;
     let mut content = Vec::new();
-    match card_image(b, score, &images) {
+    match card_image(b, score, &images, t) {
         Ok(webp) => {
             content.push(Segment::image_bytes(webp));
             for img in &images {
@@ -71,7 +74,7 @@ pub async fn bottle_forward(
     // —— 评论:按渲染高度装箱分页(每页楼数动态),每页一图一节点,楼号跨页连续;
     //    量高失败退固定楼数分页,某页渲染失败该页退文字楼层。——
     let total = comments.len();
-    let spans = paginate_comments(&comments).unwrap_or_else(|e| {
+    let spans = paginate_comments(&comments, t).unwrap_or_else(|e| {
         tracing::warn!(error = %e, "评论量高分页失败,退回固定每页楼数");
         let mut spans = Vec::new();
         let mut s = 0;
@@ -87,7 +90,7 @@ pub async fn bottle_forward(
         let chunk = &comments[s..e];
         let node_name =
             if pages > 1 { format!("评论 {}/{pages}", pi + 1) } else { "评论".to_string() };
-        match comments_image(chunk, s, total, pi + 1, pages) {
+        match comments_image(chunk, s, total, pi + 1, pages, t) {
             Ok(webp) => {
                 nodes.push(ForwardNode::new(self_id, node_name, vec![Segment::image_bytes(webp)]));
             }
@@ -176,7 +179,7 @@ pub struct BottleImage {
 
 /// 按 md5 从本地归档逐张读瓶子原图字节(发 base64 / 嵌渲染都用字节:不依赖协议端可读
 /// bot 的盘,也没有无后缀路径的兼容问题)。读不出(被清理/盘损)不静默吞图:换渐变占位图
-/// 字节,让看的人知道这里本来有张图。动图标志优先用入库时嗅探的存量,老行缺标志再按字节现嗅。
+/// 字节,让看的人知道这里本来有张图。动图标志优先读库(入库时已嗅探),读不到再按字节现嗅。
 async fn load_bottle_images(images: &serde_json::Value) -> Vec<BottleImage> {
     let mut out = Vec::new();
     for md5 in image_names(images) {
@@ -210,15 +213,20 @@ pub fn card_image(
     b: &bottle::Model,
     score: Option<f64>,
     images: &[BottleImage],
+    t: &UserTheme,
 ) -> anyhow::Result<Vec<u8>> {
     use nagisa::render::{render_document, Align, Doc};
 
+    let pal = &t.palette;
     let mut d = Doc::new();
     d.heading(2, |h| {
-        h.text(format!("漂流瓶 #{}", b.id));
+        h.text("漂流瓶 ");
+        h.styled(format!("#{}", b.id), |s| {
+            s.color(&pal.primary);
+        });
         if b.anonymous {
             h.styled("  匿名", |s| {
-                s.color("#8a8f98").size(0.55);
+                s.color(&pal.muted).size(0.55);
             });
         }
     });
@@ -228,7 +236,7 @@ pub fn card_image(
         p.styled(
             format!("评分 {} · 被捞 {} 次 · 剩余可捞 {}", score_text(score), b.total_pickups, remaining_text(b)),
             |s| {
-                s.color("#6b7280").size(0.92);
+                s.color(&pal.muted).size(0.92);
             },
         );
     });
@@ -241,7 +249,7 @@ pub fn card_image(
     }
     d.paragraph(|p| {
         p.styled(meta, |s| {
-            s.color("#6b7280").size(0.92);
+            s.color(&pal.muted).size(0.92);
         });
     });
 
@@ -278,7 +286,7 @@ pub fn card_image(
                 None => {
                     d.paragraph(|p| {
                         p.align(Align::Center).styled(MISSING_IMAGE_TEXT, |s| {
-                            s.color("#9aa0a8").size(0.85);
+                            s.color(&pal.muted).size(0.85);
                         });
                     });
                 }
@@ -292,17 +300,17 @@ pub fn card_image(
         p.align(Align::Center).styled(
             format!("评分:发送「漂流瓶评分 {0} 分数」    评论:发送「漂流瓶评论 {0} 内容」", b.id),
             |s| {
-                s.color("#9aa0a8").size(0.8);
+                s.color(&pal.muted).size(0.8);
             },
         );
     });
     d.paragraph(|p| {
         p.align(Align::Center).styled("取原文:对着本条转发回复「取原文」", |s| {
-            s.color("#9aa0a8").size(0.8);
+            s.color(&pal.muted).size(0.8);
         });
     });
 
-    Ok(render_document(&d.build(), &render_opts())?)
+    Ok(render_document(&d.build(), &render_opts(t))?)
 }
 
 /// 卡片的文字退路(渲染失败时用,信息同卡片)。
@@ -341,15 +349,17 @@ fn comments_doc(
     total: usize,
     page: usize,
     pages: usize,
+    t: &UserTheme,
 ) -> nagisa::render::Document {
     use nagisa::render::Doc;
 
+    let pal = &t.palette;
     let mut d = Doc::new();
     d.heading(4, |h| {
         h.text(format!("评论 {total} 条"));
         if pages > 1 {
             h.styled(format!("  第 {page}/{pages} 页"), |s| {
-                s.color("#8a8f98").size(0.7);
+                s.color(&pal.muted).size(0.7);
             });
         }
     });
@@ -360,10 +370,10 @@ fn comments_doc(
         let when = local_time(&c.created_at).format("%m-%d %H:%M").to_string();
         d.paragraph(|p| {
             p.styled(format!("{} 楼", offset + j + 1), |s| {
-                s.bold().size(0.85);
+                s.bold().size(0.85).color(&pal.primary);
             });
             p.styled(format!("  {} · {when}", commenter(c)), |s| {
-                s.color("#8a8f98").size(0.85);
+                s.color(&pal.muted).size(0.85);
             });
         });
         d.paragraph(|p| {
@@ -380,18 +390,22 @@ pub fn comments_image(
     total: usize,
     page: usize,
     pages: usize,
+    t: &UserTheme,
 ) -> anyhow::Result<Vec<u8>> {
     use nagisa::render::render_document;
-    Ok(render_document(&comments_doc(chunk, offset, total, page, pages), &render_opts())?)
+    Ok(render_document(&comments_doc(chunk, offset, total, page, pages, t), &render_opts(t))?)
 }
 
 /// 评论按渲染高度装箱分页:逐楼试加、量高([`nagisa::render::measure_document`],只排版
-/// 不绘制),超过 [`COMMENTS_PAGE_MAX_PX`] 就在上一楼收页。每页至少一楼(单楼超高独占
+/// 不绘制),超过 `COMMENTS_PAGE_MAX_PX` 就在上一楼收页。每页至少一楼(单楼超高独占
 /// 一页)。返回各页在 `comments` 里的 `(起, 止)` 下标(止开区间)。
-pub fn paginate_comments(comments: &[discuss::Model]) -> anyhow::Result<Vec<(usize, usize)>> {
+pub fn paginate_comments(
+    comments: &[discuss::Model],
+    t: &UserTheme,
+) -> anyhow::Result<Vec<(usize, usize)>> {
     use nagisa::render::measure_document;
 
-    let opts = render_opts();
+    let opts = render_opts(t);
     let n = comments.len();
     let total = n;
     let mut spans = Vec::new();
@@ -401,7 +415,7 @@ pub fn paginate_comments(comments: &[discuss::Model]) -> anyhow::Result<Vec<(usi
         // (页标会让标题行多一小段,量高时按多页形态算,高度不受页码数字影响。)
         let mut cut = start + 1;
         while cut < n {
-            let doc = comments_doc(&comments[start..=cut], start, total, 1, 2);
+            let doc = comments_doc(&comments[start..=cut], start, total, 1, 2, t);
             let (_, h) = measure_document(&doc, &opts)?;
             if h > COMMENTS_PAGE_MAX_PX {
                 break;
@@ -419,21 +433,23 @@ pub fn paginate_comments(comments: &[discuss::Model]) -> anyhow::Result<Vec<(usi
 pub fn list_image(
     rows: &[bottle::Model],
     scores: &std::collections::HashMap<i64, f64>,
+    t: &UserTheme,
 ) -> anyhow::Result<Vec<u8>> {
     use nagisa::render::{render_document, Align, Doc};
 
+    let pal = &t.palette;
     let mut d = Doc::new();
     d.heading(3, |h| {
         h.text(format!("你的漂流瓶(近 {} 个)", rows.len()));
     });
-    d.table(|t| {
-        t.head(["编号", "丢出时间", "被捞(剩)", "评分", "状态", "匿名"]);
-        t.align([Align::Left, Align::Left, Align::Center, Align::Center, Align::Center, Align::Center]);
-        t.expand(); // 铺满内容宽,列距舒展
-        for b in rows {
+    d.table(|tb| {
+        tb.head(["编号", "丢出时间", "被捞(剩)", "评分", "状态", "匿名"]);
+        tb.align([Align::Left, Align::Left, Align::Center, Align::Center, Align::Center, Align::Center]);
+        tb.expand(); // 铺满内容宽,列距舒展
+        for (i, b) in rows.iter().enumerate() {
             let score =
                 scores.get(&b.id).map(|s| format!("{s}分")).unwrap_or_else(|| "—".to_string());
-            t.row([
+            tb.row([
                 format!("#{}", b.id),
                 local_time(&b.created_at).format("%m-%d %H:%M").to_string(),
                 format!("{}({})", b.total_pickups, remaining_text(b)),
@@ -441,10 +457,14 @@ pub fn list_image(
                 status_text(&b.status).to_string(),
                 if b.anonymous { "是" } else { "" }.to_string(),
             ]);
+            // 编号列上主色,行有锚点好对着说事。
+            tb.cell_style(i, 0, |s| {
+                s.color(&pal.primary).weight(600);
+            });
         }
     });
 
-    Ok(render_document(&d.build(), &render_opts())?)
+    Ok(render_document(&d.build(), &render_opts(t))?)
 }
 
 /// 审核状态的中文呈现。

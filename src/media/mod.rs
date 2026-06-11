@@ -245,8 +245,8 @@ pub async fn wait(ticket: &str, timeout: Duration) -> anyhow::Result<Stored> {
     Ok(stored)
 }
 
-/// 查一份图入库时嗅探的动图标志:`Some(true/false)` = 嗅探过;`None` = 无记录或未嗅探
-/// (老行/查询失败),调用方手上有字节时可用 [`is_animated_image`] 兜底。
+/// 查一份图入库时嗅探的动图标志:`Some(true/false)` = 嗅探过;`None` = 无记录、尚未
+/// 下载完(pending 行还没嗅)或查询失败,调用方手上有字节时可用 [`is_animated_image`] 兜底。
 pub async fn animated_flag(md5: &str) -> Option<bool> {
     media_file::Entity::find_by_id(md5.to_owned())
         .one(&service().db)

@@ -19,4 +19,5 @@ pub mod online;
 pub mod ping;
 pub mod place;
 pub mod sign;
+pub mod theme;
 pub mod transfer;
