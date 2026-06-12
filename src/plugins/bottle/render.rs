@@ -53,7 +53,9 @@ pub async fn bottle_forward(
         Ok(webp) => {
             content.push(Segment::image_bytes(webp));
             for img in &images {
-                if img.animated && let Some(bytes) = &img.bytes {
+                if img.animated
+                    && let Some(bytes) = &img.bytes
+                {
                     content.push(Segment::image_bytes(bytes.clone()));
                 }
             }
@@ -88,8 +90,7 @@ pub async fn bottle_forward(
     let pages = spans.len();
     for (pi, &(s, e)) in spans.iter().enumerate() {
         let chunk = &comments[s..e];
-        let node_name =
-            if pages > 1 { format!("评论 {}/{pages}", pi + 1) } else { "评论".to_string() };
+        let node_name = if pages > 1 { format!("评论 {}/{pages}", pi + 1) } else { "评论".to_string() };
         match comments_image(chunk, s, total, pi + 1, pages, t) {
             Ok(webp) => {
                 nodes.push(ForwardNode::new(self_id, node_name, vec![Segment::image_bytes(webp)]));
@@ -112,9 +113,7 @@ pub async fn bottle_forward(
 const MISSING_IMAGE_TEXT: &str = "〔这里有张图片,但已经失效看不了了〕";
 
 /// 时间的本地时区呈现:库存 timestamptz 取出带 UTC 偏移,直接 `format` 会显示成 UTC 钟点。
-pub(super) fn local_time(
-    t: &sea_orm::prelude::DateTimeWithTimeZone,
-) -> chrono::DateTime<chrono::Local> {
+pub(super) fn local_time(t: &sea_orm::prelude::DateTimeWithTimeZone) -> chrono::DateTime<chrono::Local> {
     t.with_timezone(&chrono::Local)
 }
 
@@ -131,16 +130,10 @@ pub async fn original_forward(b: &bottle::Model, self_id: Uin) -> Segment {
         Some(t) => format!("文字 {} 字", t.chars().count()),
         None => "没有文字".to_string(),
     };
-    let image_desc = if images.is_empty() {
-        "没有图片".to_string()
-    } else {
-        format!("图片 {} 张", images.len())
-    };
-    let mut nodes = vec![ForwardNode::text(
-        self_id,
-        "漂流瓶原文",
-        format!("漂流瓶 #{} 的原始内容:{text_desc},{image_desc}", b.id),
-    )];
+    let image_desc =
+        if images.is_empty() { "没有图片".to_string() } else { format!("图片 {} 张", images.len()) };
+    let mut nodes =
+        vec![ForwardNode::text(self_id, "漂流瓶原文", format!("漂流瓶 #{} 的原始内容:{text_desc},{image_desc}", b.id))];
 
     if let Some(t) = text {
         nodes.push(ForwardNode::text(sender, sender_name.clone(), t));
@@ -163,8 +156,7 @@ fn sender_of(b: &bottle::Model, self_id: Uin) -> (Uin, String) {
     if b.anonymous {
         (self_id, "匿名漂流瓶".to_string())
     } else {
-        let name =
-            b.nickname.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| b.uin.to_string());
+        let name = b.nickname.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| b.uin.to_string());
         (Uin(b.uin), name)
     }
 }
@@ -215,7 +207,7 @@ pub fn card_image(
     images: &[BottleImage],
     t: &UserTheme,
 ) -> anyhow::Result<Vec<u8>> {
-    use nagisa::render::{render_document, Align, Doc};
+    use nagisa::render::{Align, Doc, render_document};
 
     let pal = &t.palette;
     let mut d = Doc::new();
@@ -269,11 +261,8 @@ pub fn card_image(
         d.divider();
         let total = images.len();
         for (i, img) in images.iter().enumerate() {
-            let caption = if total > 1 {
-                format!("瓶中图片 {}/{total}", i + 1)
-            } else {
-                "瓶中图片".to_string()
-            };
+            let caption =
+                if total > 1 { format!("瓶中图片 {}/{total}", i + 1) } else { "瓶中图片".to_string() };
             match &img.bytes {
                 Some(bytes) => {
                     d.image_bytes(bytes.clone(), |im| {
@@ -399,10 +388,7 @@ pub fn comments_image(
 /// 评论按渲染高度装箱分页:逐楼试加、量高([`nagisa::render::measure_document`],只排版
 /// 不绘制),超过 `COMMENTS_PAGE_MAX_PX` 就在上一楼收页。每页至少一楼(单楼超高独占
 /// 一页)。返回各页在 `comments` 里的 `(起, 止)` 下标(止开区间)。
-pub fn paginate_comments(
-    comments: &[discuss::Model],
-    t: &UserTheme,
-) -> anyhow::Result<Vec<(usize, usize)>> {
+pub fn paginate_comments(comments: &[discuss::Model], t: &UserTheme) -> anyhow::Result<Vec<(usize, usize)>> {
     use nagisa::render::measure_document;
 
     let opts = render_opts(t);
@@ -435,7 +421,7 @@ pub fn list_image(
     scores: &std::collections::HashMap<i64, f64>,
     t: &UserTheme,
 ) -> anyhow::Result<Vec<u8>> {
-    use nagisa::render::{render_document, Align, Doc};
+    use nagisa::render::{Align, Doc, render_document};
 
     let pal = &t.palette;
     let mut d = Doc::new();
@@ -447,8 +433,7 @@ pub fn list_image(
         tb.align([Align::Left, Align::Left, Align::Center, Align::Center, Align::Center, Align::Center]);
         tb.expand(); // 铺满内容宽,列距舒展
         for (i, b) in rows.iter().enumerate() {
-            let score =
-                scores.get(&b.id).map(|s| format!("{s}分")).unwrap_or_else(|| "—".to_string());
+            let score = scores.get(&b.id).map(|s| format!("{s}分")).unwrap_or_else(|| "—".to_string());
             tb.row([
                 format!("#{}", b.id),
                 local_time(&b.created_at).format("%m-%d %H:%M").to_string(),
@@ -494,8 +479,5 @@ fn remaining_text(b: &bottle::Model) -> String {
 
 /// 解析瓶子 `images`(JSONB 字符串数组)成内容 md5 序列;非数组 / 非字符串项跳过。
 fn image_names(images: &serde_json::Value) -> Vec<String> {
-    images
-        .as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-        .unwrap_or_default()
+    images.as_array().map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default()
 }

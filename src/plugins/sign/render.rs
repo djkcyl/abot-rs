@@ -5,12 +5,12 @@
 //! 经验鲜槽 / 等级与进度主槽 / 里程碑重槽,亮暗与底栏色带都跟着主题)。渲染失败由
 //! 调用方退回文字。
 
-use nagisa::render::{render_document, Align, Doc, FontRole, Insets};
+use nagisa::render::{Align, Doc, FontRole, Insets, render_document};
 
+use crate::COIN_NAME;
 use crate::data::level::LevelInfo;
 use crate::imaging::UserTheme;
 use crate::plugins::sign::logic::{FIRST_GIFT, JACKPOT_GOLD};
-use crate::COIN_NAME;
 
 /// 渲卡片要的全部数据(结算现成值 + 呈现素材,这里只管排版)。
 pub struct SignCard {
@@ -266,12 +266,7 @@ pub fn calendar_image(c: &CalendarCard) -> anyhow::Result<Vec<u8>> {
     // —— 底部:统计行。——
     d.paragraph(|p| {
         p.align(Align::Center).styled(
-            format!(
-                "连签 {} 天 · 本月 {} 天 · 累计 {} 次",
-                c.continue_sign,
-                c.days.len(),
-                c.total_sign
-            ),
+            format!("连签 {} 天 · 本月 {} 天 · 累计 {} 次", c.continue_sign, c.days.len(), c.total_sign),
             |s| {
                 s.color(&pal.muted).size(0.9);
             },

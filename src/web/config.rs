@@ -5,7 +5,7 @@
 use arc_swap::ArcSwap;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ActiveValue::Set, DatabaseConnection, EntityTrait};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -65,12 +65,7 @@ impl ConfigStore {
     }
 
     /// 写库 + 热替换(config/set 校验通过后调)。
-    pub async fn set(
-        &self,
-        db: &DatabaseConnection,
-        plugin_key: &str,
-        value: Value,
-    ) -> Result<(), String> {
+    pub async fn set(&self, db: &DatabaseConnection, plugin_key: &str, value: Value) -> Result<(), String> {
         let now = chrono::Utc::now().fixed_offset();
         let am = setting::ActiveModel {
             plugin_key: Set(plugin_key.to_string()),

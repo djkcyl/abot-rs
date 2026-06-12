@@ -47,26 +47,16 @@ pub async fn image_moderation(cfg: &TcConfig, bytes: &[u8]) -> Result<TcVerdict>
 }
 
 /// 拼签名、发请求、解响应。任何环节出错都向上抛 `Err`。
-async fn call(
-    cfg: &TcConfig,
-    host: &str,
-    service: &str,
-    action: &str,
-    body: &Value,
-) -> Result<TcVerdict> {
+async fn call(cfg: &TcConfig, host: &str, service: &str, action: &str, body: &Value) -> Result<TcVerdict> {
     let payload = serde_json::to_vec(body).context("序列化请求体失败")?;
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .context("系统时间早于 UNIX 纪元")?
-        .as_secs() as i64;
-    let date = chrono::DateTime::from_timestamp(timestamp, 0)
-        .context("时间戳无法转为日期")?
-        .format("%Y-%m-%d")
-        .to_string();
+    let timestamp =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).context("系统时间早于 UNIX 纪元")?.as_secs()
+            as i64;
+    let date =
+        chrono::DateTime::from_timestamp(timestamp, 0).context("时间戳无法转为日期")?.format("%Y-%m-%d").to_string();
 
-    let authorization =
-        sign(&cfg.secret_id, &cfg.secret_key, host, service, &date, timestamp, &payload);
+    let authorization = sign(&cfg.secret_id, &cfg.secret_key, host, service, &date, timestamp, &payload);
 
     let url = format!("https://{host}/");
     let resp = client()
@@ -117,16 +107,13 @@ fn sign(
 ) -> String {
     // 1. 规范请求：签名头固定 content-type;host，URI 为 /，查询串空。
     let hashed_payload = hex::encode(Sha256::digest(payload));
-    let canonical_request = format!(
-        "POST\n/\n\ncontent-type:{CONTENT_TYPE}\nhost:{host}\n\ncontent-type;host\n{hashed_payload}"
-    );
+    let canonical_request =
+        format!("POST\n/\n\ncontent-type:{CONTENT_TYPE}\nhost:{host}\n\ncontent-type;host\n{hashed_payload}");
 
     // 2. 待签字符串。
     let credential_scope = format!("{date}/{service}/tc3_request");
     let hashed_canonical = hex::encode(Sha256::digest(canonical_request.as_bytes()));
-    let string_to_sign = format!(
-        "TC3-HMAC-SHA256\n{timestamp}\n{credential_scope}\n{hashed_canonical}"
-    );
+    let string_to_sign = format!("TC3-HMAC-SHA256\n{timestamp}\n{credential_scope}\n{hashed_canonical}");
 
     // 3. 逐级派生签名密钥。
     let secret_date = hmac(format!("TC3{secret_key}").as_bytes(), date.as_bytes());
@@ -151,10 +138,5 @@ fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
 /// 进程级共享 HTTP 客户端（rustls，15s 超时）。
 fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .unwrap_or_default()
-    })
+    CLIENT.get_or_init(|| reqwest::Client::builder().timeout(Duration::from_secs(15)).build().unwrap_or_default())
 }

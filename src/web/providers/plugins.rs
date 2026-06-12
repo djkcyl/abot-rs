@@ -3,14 +3,13 @@
 //! 清单内容编译期登记、`get()` 现算;authority 1(任意登录用户可见),toggle authority 4。
 
 use nagisa::async_trait;
-use nagisa::{registered_plugins, registered_triggers, EnabledSet, PluginMeta, TriggerKind, TriggerMeta};
+use nagisa::{EnabledSet, PluginMeta, TriggerKind, TriggerMeta, registered_plugins, registered_triggers};
 use sea_orm::DatabaseConnection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::web::registry::{
-    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService,
-    WebListener,
+    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService, WebListener,
 };
 use crate::web::switches::store_overrides;
 
@@ -48,10 +47,7 @@ impl WebDataService for PluginData {
         let enabled = &self.0.enabled;
         // 触发器清单一次取出，按插件有效 key 给每个插件挑出它名下的命令。
         let triggers = registered_triggers();
-        let plugins: Vec<Value> = registered_plugins()
-            .iter()
-            .map(|p| plugin_json(p, &triggers, enabled))
-            .collect();
+        let plugins: Vec<Value> = registered_plugins().iter().map(|p| plugin_json(p, &triggers, enabled)).collect();
         json!({ "plugins": plugins })
     }
 }
@@ -60,11 +56,7 @@ impl WebDataService for PluginData {
 ///
 /// 与触发器侧的 `plugin_key` 口径一致,这样命令才能对回所属插件。
 fn effective_key(p: &PluginMeta) -> &str {
-    if p.key.is_empty() {
-        p.module_path.rsplit("::").next().unwrap_or(p.module_path)
-    } else {
-        p.key
-    }
+    if p.key.is_empty() { p.module_path.rsplit("::").next().unwrap_or(p.module_path) } else { p.key }
 }
 
 /// 把一个 `PluginMeta` 序列化成前端要的字段(含开关当前状态、是否可停用,以及名下命令清单)。
@@ -88,9 +80,7 @@ fn plugin_desc<'a>(p: &'a PluginMeta, triggers: &'a [TriggerMeta]) -> &'a str {
         return p.description;
     }
     let key = effective_key(p);
-    let mut it = triggers
-        .iter()
-        .filter(|t| matches!(t.kind, TriggerKind::Command) && !t.hidden && t.plugin_key == key);
+    let mut it = triggers.iter().filter(|t| matches!(t.kind, TriggerKind::Command) && !t.hidden && t.plugin_key == key);
     match (it.next(), it.next()) {
         (Some(only), None) => only.description,
         _ => "",
@@ -99,10 +89,8 @@ fn plugin_desc<'a>(p: &'a PluginMeta, triggers: &'a [TriggerMeta]) -> &'a str {
 
 /// 某插件名下的命令清单:只取命令型触发器(过滤掉事件型),每条带自身子开关的当前状态。
 fn commands_json(plugin_key: &str, triggers: &[TriggerMeta], enabled: &EnabledSet) -> Vec<Value> {
-    let mut cmds: Vec<&TriggerMeta> = triggers
-        .iter()
-        .filter(|t| matches!(t.kind, TriggerKind::Command) && t.plugin_key == plugin_key)
-        .collect();
+    let mut cmds: Vec<&TriggerMeta> =
+        triggers.iter().filter(|t| matches!(t.kind, TriggerKind::Command) && t.plugin_key == plugin_key).collect();
     cmds.sort_by_key(|t| t.order); // 与 help 同序(order 小在前,稳定)
     cmds.into_iter()
         .map(|t| {
@@ -136,10 +124,7 @@ impl WebListener for PluginToggle {
         let want = args.get("enabled").and_then(|v| v.as_bool()).ok_or("缺少 enabled")?;
 
         // 校验插件存在且允许停用(不可停用的插件不许动开关)。
-        let meta = registered_plugins()
-            .into_iter()
-            .find(|p| p.key == key)
-            .ok_or("未知插件")?;
+        let meta = registered_plugins().into_iter().find(|p| p.key == key).ok_or("未知插件")?;
         if !meta.can_disable {
             return Err("该插件不可停用".into());
         }

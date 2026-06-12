@@ -27,10 +27,10 @@ use std::time::Duration;
 
 use anyhow::bail;
 use nagisa::prelude::*;
-use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::ActiveValue::Set;
+use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
-use tokio::sync::{broadcast, mpsc, Semaphore};
+use tokio::sync::{Semaphore, broadcast, mpsc};
 
 use self::entity as media_file;
 
@@ -107,10 +107,7 @@ pub async fn init(db: DatabaseConnection) -> anyhow::Result<()> {
     tokio::spawn(dispatch(rx));
 
     // 崩溃恢复:上次进程退出时还挂着的 pending 重新排队(来源 URL 可能已过期,失败会记 failed)。
-    let stale = media_file::Entity::find()
-        .filter(media_file::Column::Status.eq("pending"))
-        .all(&service().db)
-        .await?;
+    let stale = media_file::Entity::find().filter(media_file::Column::Status.eq("pending")).all(&service().db).await?;
     if !stale.is_empty() {
         tracing::info!(count = stale.len(), "重新排队上次未完成的图片下载");
         for row in stale {
@@ -126,10 +123,8 @@ pub async fn init(db: DatabaseConnection) -> anyhow::Result<()> {
 /// 图片落盘根目录(环境变量 `IMAGE_DIR`,默认 `./data/images`);读一次缓存。
 pub fn image_dir() -> &'static Path {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        std::env::var("IMAGE_DIR").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("./data/images"))
-    })
-    .as_path()
+    DIR.get_or_init(|| std::env::var("IMAGE_DIR").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("./data/images")))
+        .as_path()
 }
 
 /// md5 的分片子目录:前 4 个字符切两级(`a1b2…` → `a1/b2`);不合形的归 `misc`
@@ -189,8 +184,7 @@ pub async fn ingest(refs: Vec<MediaRef>) -> Vec<String> {
     let svc = service();
     let mut tickets = Vec::with_capacity(refs.len());
     for r in refs {
-        let ticket =
-            r.md5.clone().unwrap_or_else(|| format!("u{:x}", md5::compute(r.url.as_bytes())));
+        let ticket = r.md5.clone().unwrap_or_else(|| format!("u{:x}", md5::compute(r.url.as_bytes())));
         tickets.push(ticket.clone());
 
         // 已在盘上 → 记一次遇见(行缺失则按盘上字节自愈补 done 行),不排队。
@@ -198,14 +192,8 @@ pub async fn ingest(refs: Vec<MediaRef>) -> Vec<String> {
             && let Some(path) = locate(&ticket)
         {
             let (format, size, animated) = sniff_disk(&path).await;
-            record_seen(
-                &svc.db,
-                &ticket,
-                &r.url,
-                r.claimed_ext.as_deref(),
-                Init::Done { format, size, animated },
-            )
-            .await;
+            record_seen(&svc.db, &ticket, &r.url, r.claimed_ext.as_deref(), Init::Done { format, size, animated })
+                .await;
             continue;
         }
 
@@ -248,12 +236,7 @@ pub async fn wait(ticket: &str, timeout: Duration) -> anyhow::Result<Stored> {
 /// 查一份图入库时嗅探的动图标志:`Some(true/false)` = 嗅探过;`None` = 无记录、尚未
 /// 下载完(pending 行还没嗅)或查询失败,调用方手上有字节时可用 [`is_animated_image`] 兜底。
 pub async fn animated_flag(md5: &str) -> Option<bool> {
-    media_file::Entity::find_by_id(md5.to_owned())
-        .one(&service().db)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|m| m.animated)
+    media_file::Entity::find_by_id(md5.to_owned()).one(&service().db).await.ok().flatten().and_then(|m| m.animated)
 }
 
 /// 刷新一份图的 `last_used`(取用即「使用」:wait 取到 / 重发 / WebUI 取图)。
@@ -434,13 +417,7 @@ enum Init {
 /// 记一次「遇见」:行不存在按 `init` 形态插入(`seen_count` 库默认 1);已存在则
 /// `seen_count`+1、`last_seen` 刷新、URL/后缀更新成最近一次的,**不动状态**
 /// (下载生命周期由队列收尾函数管)。失败只记 warn。
-async fn record_seen(
-    db: &DatabaseConnection,
-    key: &str,
-    url: &str,
-    claimed_ext: Option<&str>,
-    init: Init,
-) {
+async fn record_seen(db: &DatabaseConnection, key: &str, url: &str, claimed_ext: Option<&str>, init: Init) {
     let mut row = media_file::ActiveModel {
         md5: Set(key.to_string()),
         url: Set(url.to_string()),
@@ -580,7 +557,5 @@ async fn sniff_disk(path: &Path) -> (Option<String>, Option<i64>, Option<bool>) 
 /// 进程级共享的 HTTP 客户端(rustls,30s 超时)。
 fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap_or_default()
-    })
+    CLIENT.get_or_init(|| reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap_or_default())
 }

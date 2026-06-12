@@ -4,13 +4,11 @@
 
 use nagisa::async_trait;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryOrder};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::web::entity;
-use crate::web::registry::{
-    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebListener,
-};
+use crate::web::registry::{AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebListener};
 
 pub struct SessionsProvider {
     db: DatabaseConnection,
@@ -69,10 +67,7 @@ impl WebListener for TokenRevoke {
     }
     async fn handle(&self, args: Value, _who: AuthUser) -> Result<Value, String> {
         let token = args.get("token").and_then(|v| v.as_str()).ok_or("缺少 token")?;
-        let res = entity::Entity::delete_by_id(token.to_string())
-            .exec(&self.0)
-            .await
-            .map_err(|e| e.to_string())?;
+        let res = entity::Entity::delete_by_id(token.to_string()).exec(&self.0).await.map_err(|e| e.to_string())?;
         tracing::warn!(target: "abot::web::audit", "网页控制台吊销会话");
         Ok(json!({ "ok": true, "affected": res.rows_affected }))
     }

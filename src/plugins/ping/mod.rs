@@ -14,9 +14,7 @@ plugin! {
 }
 
 /// `ping` → 回 `pong`:最简存活探针,确认 bot 在线且 dispatch 链路通。
-#[command("ping",
-    description = "测试机器人是否在线",
-    usage = "发送「ping」，机器人在线会回复「pong」。")]
+#[command("ping", description = "测试机器人是否在线", usage = "发送「ping」，机器人在线会回复「pong」。")]
 async fn ping(reply: Reply) -> HandlerResult {
     reply.text("pong").await?;
     Ok(())

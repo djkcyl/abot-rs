@@ -13,21 +13,18 @@
 
 use nagisa::async_trait;
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement, Value as SqlValue};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::web::registry::{
-    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService,
-    WebListener,
+    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService, WebListener,
 };
 
 const MAX_LIMIT: u64 = 200;
 const DEFAULT_LIMIT: u64 = 50;
 
 /// 筛选算子白名单。`needs_value=false` 的两个不绑值。
-const FILTER_OPS: &[&str] = &[
-    "=", "!=", "<", ">", "<=", ">=", "like", "ilike", "is null", "is not null",
-];
+const FILTER_OPS: &[&str] = &["=", "!=", "<", ">", "<=", ">=", "like", "ilike", "is null", "is not null"];
 
 /// 一列的真实元信息(全部取自 information_schema)。
 struct ColInfo {
@@ -67,20 +64,13 @@ async fn discover_tables(db: &DatabaseConnection) -> Result<Vec<String>, String>
          WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name",
     );
     let rows = db.query_all(stmt).await.map_err(|e| e.to_string())?;
-    Ok(rows
-        .iter()
-        .filter_map(|r| r.try_get::<String>("", "table_name").ok())
-        .collect())
+    Ok(rows.iter().filter_map(|r| r.try_get::<String>("", "table_name").ok()).collect())
 }
 
 /// 校验表名:必须命中实时清单,否则报错。返回原表名(已确认安全)。
 async fn checked_table(db: &DatabaseConnection, table: &str) -> Result<String, String> {
     let tables = discover_tables(db).await?;
-    if tables.iter().any(|t| t == table) {
-        Ok(table.to_string())
-    } else {
-        Err(format!("未知的表:{table}"))
-    }
+    if tables.iter().any(|t| t == table) { Ok(table.to_string()) } else { Err(format!("未知的表:{table}")) }
 }
 
 /// 某表的列元信息(按列序)。表名作为**参数**绑定,不拼进 SQL。
@@ -116,10 +106,7 @@ async fn pk_columns(db: &DatabaseConnection, table: &str) -> Result<Vec<String>,
         [SqlValue::from(table.to_string())],
     );
     let rows = db.query_all(stmt).await.map_err(|e| e.to_string())?;
-    Ok(rows
-        .iter()
-        .filter_map(|r| r.try_get::<String>("", "column_name").ok())
-        .collect())
+    Ok(rows.iter().filter_map(|r| r.try_get::<String>("", "column_name").ok()).collect())
 }
 
 // ───────────────────────── 值绑定 ─────────────────────────
@@ -146,9 +133,7 @@ fn text_value(t: Option<String>) -> SqlValue {
 
 /// 在列集里找一列(校验列名白名单)。返回其元信息引用,不命中即报错。
 fn checked_col<'a>(cols: &'a [ColInfo], name: &str) -> Result<&'a ColInfo, String> {
-    cols.iter()
-        .find(|c| c.name == name)
-        .ok_or_else(|| format!("未知的列:{name}"))
+    cols.iter().find(|c| c.name == name).ok_or_else(|| format!("未知的列:{name}"))
 }
 
 /// 占位符 cast 的目标类型。数组列的 `udt_name` 形如 `_int4`,转成标准 `int4[]`(两种 Postgres 都认,
@@ -181,10 +166,7 @@ impl WebDataService for DbData {
         for name in names {
             // 表名已命中清单,加引号安全;count 无参数。
             let sql = format!("SELECT count(*) AS n FROM \"{name}\"");
-            let rows: i64 = match db
-                .query_one(Statement::from_string(db.get_database_backend(), sql))
-                .await
-            {
+            let rows: i64 = match db.query_one(Statement::from_string(db.get_database_backend(), sql)).await {
                 Ok(Some(row)) => row.try_get::<i64>("", "n").unwrap_or(0),
                 _ => 0,
             };
@@ -216,11 +198,7 @@ impl WebListener for DbQuery {
         }
         let pk = pk_columns(db, &table).await?;
 
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(DEFAULT_LIMIT)
-            .clamp(1, MAX_LIMIT);
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
         let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
 
         // WHERE 子句 + 绑定值(占位符从 $1 起累加)。
@@ -264,18 +242,11 @@ impl WebListener for DbQuery {
         {
             idx += 1;
             values.push(text_value(Some(format!("%{search}%"))));
-            let ors: Vec<String> = cols
-                .iter()
-                .map(|c| format!("\"{}\"::text ILIKE ${}", c.name, idx))
-                .collect();
+            let ors: Vec<String> = cols.iter().map(|c| format!("\"{}\"::text ILIKE ${}", c.name, idx)).collect();
             clauses.push(format!("({})", ors.join(" OR ")));
         }
 
-        let where_sql = if clauses.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", clauses.join(" AND "))
-        };
+        let where_sql = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
 
         // ORDER BY:仅当 order_by 命中白名单。方向只取 asc/desc。
         let mut order_sql = String::new();
@@ -288,11 +259,7 @@ impl WebListener for DbQuery {
             order_sql = format!(" ORDER BY \"{}\" {}", oc.name, dir);
         }
 
-        let all_cols = cols
-            .iter()
-            .map(|c| format!("\"{}\"", c.name))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let all_cols = cols.iter().map(|c| format!("\"{}\"", c.name)).collect::<Vec<_>>().join(", ");
 
         // 行:外层 to_jsonb 整行,内层做投影/筛选/排序/分页。limit/offset 已夹紧,可内联。
         let row_sql = format!(
@@ -301,10 +268,7 @@ impl WebListener for DbQuery {
         );
         let row_stmt = Statement::from_sql_and_values(backend, &row_sql, values.clone());
         let rows = db.query_all(row_stmt).await.map_err(|e| e.to_string())?;
-        let items: Vec<Value> = rows
-            .iter()
-            .map(|r| r.try_get::<Value>("", "row").unwrap_or(Value::Null))
-            .collect();
+        let items: Vec<Value> = rows.iter().map(|r| r.try_get::<Value>("", "row").unwrap_or(Value::Null)).collect();
 
         // total:同样的 WHERE + 同样的绑定值(不含 limit/offset)。
         let count_sql = format!("SELECT count(*) AS n FROM \"{table}\"{where_sql}");
@@ -314,10 +278,8 @@ impl WebListener for DbQuery {
             None => 0,
         };
 
-        let columns: Vec<Value> = cols
-            .iter()
-            .map(|c| json!({ "name": c.name, "data_type": c.data_type, "nullable": c.nullable }))
-            .collect();
+        let columns: Vec<Value> =
+            cols.iter().map(|c| json!({ "name": c.name, "data_type": c.data_type, "nullable": c.nullable })).collect();
         Ok(json!({
             "columns": columns,
             "pk": pk,
@@ -346,10 +308,7 @@ impl WebListener for DbInsert {
         let table_raw = args.get("table").and_then(|v| v.as_str()).ok_or("缺少 table")?;
         let table = checked_table(db, table_raw).await?;
         let cols = table_columns(db, &table).await?;
-        let set = args
-            .get("values")
-            .and_then(|v| v.as_object())
-            .ok_or("缺少 values")?;
+        let set = args.get("values").and_then(|v| v.as_object()).ok_or("缺少 values")?;
         if set.is_empty() {
             return Err("没有要写入的列".to_string());
         }
@@ -363,11 +322,7 @@ impl WebListener for DbInsert {
             values.push(text_value(bind_text(v)));
             placeholders.push(format!("${}::{}", values.len(), cast_type(&col.udt_name)));
         }
-        let sql = format!(
-            "INSERT INTO \"{table}\" ({}) VALUES ({})",
-            names.join(", "),
-            placeholders.join(", ")
-        );
+        let sql = format!("INSERT INTO \"{table}\" ({}) VALUES ({})", names.join(", "), placeholders.join(", "));
         let stmt = Statement::from_sql_and_values(backend, &sql, values);
         db.execute(stmt).await.map_err(|e| e.to_string())?;
         tracing::warn!(target: "abot::web::audit", action = "insert", table = %table, "网页控制台数据库写操作");
@@ -428,11 +383,7 @@ impl WebListener for DbUpdate {
             values.push(text_value(bind_text(v)));
             where_parts.push(format!("\"{}\"=${}::{}", col.name, values.len(), cast_type(&col.udt_name)));
         }
-        let sql = format!(
-            "UPDATE \"{table}\" SET {} WHERE {}",
-            set_parts.join(", "),
-            where_parts.join(" AND ")
-        );
+        let sql = format!("UPDATE \"{table}\" SET {} WHERE {}", set_parts.join(", "), where_parts.join(" AND "));
         let stmt = Statement::from_sql_and_values(backend, &sql, values);
         let res = db.execute(stmt).await.map_err(|e| e.to_string())?;
         tracing::warn!(target: "abot::web::audit", action = "update", table = %table, "网页控制台数据库写操作");

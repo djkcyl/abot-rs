@@ -87,49 +87,18 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Bottle::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(Bottle::Id)
-                            .big_integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
+                    .col(ColumnDef::new(Bottle::Id).big_integer().not_null().auto_increment().primary_key())
                     .col(ColumnDef::new(Bottle::Uin).big_integer().not_null())
                     .col(ColumnDef::new(Bottle::Nickname).text().null())
                     .col(ColumnDef::new(Bottle::GroupId).big_integer().null())
                     .col(ColumnDef::new(Bottle::Text).text().null())
-                    .col(
-                        ColumnDef::new(Bottle::Images)
-                            .json_binary()
-                            .not_null()
-                            .default(Expr::cust("'[]'::jsonb")),
-                    )
-                    .col(
-                        ColumnDef::new(Bottle::Anonymous)
-                            .boolean()
-                            .not_null()
-                            .default(false),
-                    )
-                    .col(
-                        ColumnDef::new(Bottle::TotalPickups)
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Bottle::RemainingPickups)
-                            .integer()
-                            .not_null()
-                            .default(-1),
-                    )
+                    .col(ColumnDef::new(Bottle::Images).json_binary().not_null().default(Expr::cust("'[]'::jsonb")))
+                    .col(ColumnDef::new(Bottle::Anonymous).boolean().not_null().default(false))
+                    .col(ColumnDef::new(Bottle::TotalPickups).integer().not_null().default(0))
+                    .col(ColumnDef::new(Bottle::RemainingPickups).integer().not_null().default(-1))
                     .col(ColumnDef::new(Bottle::Status).text().not_null())
                     .col(ColumnDef::new(Bottle::Moderation).json_binary().null())
-                    .col(
-                        ColumnDef::new(Bottle::Isdelete)
-                            .boolean()
-                            .not_null()
-                            .default(false),
-                    )
+                    .col(ColumnDef::new(Bottle::Isdelete).boolean().not_null().default(false))
                     .col(
                         ColumnDef::new(Bottle::CreatedAt)
                             .timestamp_with_time_zone()
@@ -153,12 +122,7 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .create_index(
-                Index::create()
-                    .if_not_exists()
-                    .name("idx_bottle_uin")
-                    .table(Bottle::Table)
-                    .col(Bottle::Uin)
-                    .to_owned(),
+                Index::create().if_not_exists().name("idx_bottle_uin").table(Bottle::Table).col(Bottle::Uin).to_owned(),
             )
             .await?;
 
@@ -169,13 +133,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(BottleScore::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(BottleScore::Id)
-                            .big_integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
+                    .col(ColumnDef::new(BottleScore::Id).big_integer().not_null().auto_increment().primary_key())
                     .col(ColumnDef::new(BottleScore::BottleId).big_integer().not_null())
                     .col(ColumnDef::new(BottleScore::Uin).big_integer().not_null())
                     .col(ColumnDef::new(BottleScore::Score).small_integer().not_null())
@@ -221,13 +179,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(BottleDiscuss::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(BottleDiscuss::Id)
-                            .big_integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
+                    .col(ColumnDef::new(BottleDiscuss::Id).big_integer().not_null().auto_increment().primary_key())
                     .col(ColumnDef::new(BottleDiscuss::BottleId).big_integer().not_null())
                     .col(ColumnDef::new(BottleDiscuss::Uin).big_integer().not_null())
                     .col(ColumnDef::new(BottleDiscuss::Nickname).text().null())
@@ -278,18 +230,10 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // 逆序删表（无 FK，顺序仅为对称）。
-        manager
-            .drop_table(Table::drop().table(BottleSent::Table).if_exists().to_owned())
-            .await?;
-        manager
-            .drop_table(Table::drop().table(BottleDiscuss::Table).if_exists().to_owned())
-            .await?;
-        manager
-            .drop_table(Table::drop().table(BottleScore::Table).if_exists().to_owned())
-            .await?;
-        manager
-            .drop_table(Table::drop().table(Bottle::Table).if_exists().to_owned())
-            .await?;
+        manager.drop_table(Table::drop().table(BottleSent::Table).if_exists().to_owned()).await?;
+        manager.drop_table(Table::drop().table(BottleDiscuss::Table).if_exists().to_owned()).await?;
+        manager.drop_table(Table::drop().table(BottleScore::Table).if_exists().to_owned()).await?;
+        manager.drop_table(Table::drop().table(Bottle::Table).if_exists().to_owned()).await?;
         Ok(())
     }
 }

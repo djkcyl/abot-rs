@@ -87,12 +87,8 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .drop_table(Table::drop().table(Setting::Table).if_exists().to_owned())
-            .await?;
-        manager
-            .drop_table(Table::drop().table(WebToken::Table).if_exists().to_owned())
-            .await?;
+        manager.drop_table(Table::drop().table(Setting::Table).if_exists().to_owned()).await?;
+        manager.drop_table(Table::drop().table(WebToken::Table).if_exists().to_owned()).await?;
         Ok(())
     }
 }

@@ -50,12 +50,7 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(ColumnDef::new(MediaFile::Md5).string().not_null().primary_key())
                     .col(ColumnDef::new(MediaFile::Url).text().not_null())
-                    .col(
-                        ColumnDef::new(MediaFile::Status)
-                            .string()
-                            .not_null()
-                            .default("pending"),
-                    )
+                    .col(ColumnDef::new(MediaFile::Status).string().not_null().default("pending"))
                     .col(ColumnDef::new(MediaFile::Error).text().null())
                     .col(ColumnDef::new(MediaFile::Size).big_integer().null())
                     .col(ColumnDef::new(MediaFile::ClaimedExt).string().null())

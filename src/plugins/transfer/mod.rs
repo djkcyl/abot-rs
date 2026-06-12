@@ -14,9 +14,9 @@
 use nagisa::prelude::*;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
-use crate::data::entity::coin_log;
-use crate::data::AUser;
 use crate::COIN_NAME;
+use crate::data::AUser;
+use crate::data::entity::coin_log;
 
 plugin! {
     key = "transfer",
@@ -43,15 +43,8 @@ struct TransferArgs {
 }
 
 /// `转账` / `transfer` → 给 @目标转游戏币。参数都可选,命令总能进来,缺啥在这里解释。
-#[command("转账", "transfer",
-    description = "把游戏币转给别人",
-    usage = "每业务日有转出上限，凌晨 4 点刷新。")]
-async fn transfer(
-    reply: Reply,
-    mut user: AUser,
-    session: Session,
-    args: Args<TransferArgs>,
-) -> HandlerResult {
+#[command("转账", "transfer", description = "把游戏币转给别人", usage = "每业务日有转出上限，凌晨 4 点刷新。")]
+async fn transfer(reply: Reply, mut user: AUser, session: Session, args: Args<TransferArgs>) -> HandlerResult {
     let TransferArgs { target, all, amount } = args.0;
     let me = user.uin();
     // user 已持同一份连接（内部 Arc，克隆廉价）；克隆出来供 transferred_today 等只读查询用，
@@ -114,9 +107,7 @@ async fn transfer(
     let sent_today = transferred_today(&db, me).await?;
     if sent_today + num > DAILY_LIMIT {
         let left = (DAILY_LIMIT - sent_today).max(0);
-        reply
-            .reply(format!("超过每日转账上限 {DAILY_LIMIT}，今天还能转 {left} {COIN_NAME}（凌晨 4 点刷新）"))
-            .await?;
+        reply.reply(format!("超过每日转账上限 {DAILY_LIMIT}，今天还能转 {left} {COIN_NAME}（凌晨 4 点刷新）")).await?;
         return Ok(());
     }
 

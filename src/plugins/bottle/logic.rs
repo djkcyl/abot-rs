@@ -6,8 +6,8 @@
 
 use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
-    ActiveValue::NotSet, ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    ActiveValue::NotSet, ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
 };
 
 use super::entity::{bottle, discuss, score, sent};
@@ -45,9 +45,7 @@ pub async fn create_bottle(db: &DatabaseConnection, b: NewBottle) -> anyhow::Res
         nickname: Set(b.nickname),
         group_id: Set(b.group_id),
         text: Set(b.text),
-        images: Set(serde_json::Value::Array(
-            b.images.into_iter().map(serde_json::Value::String).collect(),
-        )),
+        images: Set(serde_json::Value::Array(b.images.into_iter().map(serde_json::Value::String).collect())),
         anonymous: Set(b.anonymous),
         total_pickups: NotSet,
         remaining_pickups: Set(b.remaining),
@@ -83,8 +81,8 @@ pub async fn select_candidate(db: &DatabaseConnection) -> anyhow::Result<Option<
         weights.push((avg.round() as u32).max(1));
     }
 
-    use rand::distr::weighted::WeightedIndex;
     use rand::distr::Distribution;
+    use rand::distr::weighted::WeightedIndex;
     let dist = WeightedIndex::new(&weights).expect("权重至少为 1,非空且总和为正");
     let idx = dist.sample(&mut rand::rng());
     Ok(candidates.into_iter().nth(idx))
@@ -97,9 +95,7 @@ pub async fn record_pickup(db: &DatabaseConnection, bottle_id: i64) -> anyhow::R
         .col_expr(bottle::Column::TotalPickups, Expr::col(bottle::Column::TotalPickups).add(1))
         .col_expr(
             bottle::Column::RemainingPickups,
-            Expr::cust(
-                "CASE WHEN remaining_pickups > 0 THEN remaining_pickups - 1 ELSE remaining_pickups END",
-            ),
+            Expr::cust("CASE WHEN remaining_pickups > 0 THEN remaining_pickups - 1 ELSE remaining_pickups END"),
         )
         .filter(bottle::Column::Id.eq(bottle_id))
         .exec(db)
@@ -139,10 +135,7 @@ pub async fn score_avg(db: &DatabaseConnection, bottle_id: i64) -> anyhow::Resul
 }
 
 /// 批量取一组瓶子的去极值均值评分（列表用，一次查询，免 N+1）。只返回有评分（≥3 条）的瓶子。
-pub async fn score_avgs(
-    db: &DatabaseConnection,
-    ids: &[i64],
-) -> anyhow::Result<std::collections::HashMap<i64, f64>> {
+pub async fn score_avgs(db: &DatabaseConnection, ids: &[i64]) -> anyhow::Result<std::collections::HashMap<i64, f64>> {
     use std::collections::HashMap;
     if ids.is_empty() {
         return Ok(HashMap::new());
@@ -172,12 +165,7 @@ pub async fn score_avgs(
 }
 
 /// 评分 upsert：按 `(bottle_id, uin)` 唯一键，存在即改分。`score` 已校验 `1..=5`（校验在上层）。
-pub async fn set_score(
-    db: &DatabaseConnection,
-    bottle_id: i64,
-    uin: i64,
-    score: i16,
-) -> anyhow::Result<()> {
+pub async fn set_score(db: &DatabaseConnection, bottle_id: i64, uin: i64, score: i16) -> anyhow::Result<()> {
     let row = score::ActiveModel {
         id: NotSet,
         bottle_id: Set(bottle_id),
@@ -233,10 +221,7 @@ pub async fn add_discuss(
 }
 
 /// 取某瓶全部评论（按时间升序），渲染楼层用。
-pub async fn get_discuss(
-    db: &DatabaseConnection,
-    bottle_id: i64,
-) -> anyhow::Result<Vec<discuss::Model>> {
+pub async fn get_discuss(db: &DatabaseConnection, bottle_id: i64) -> anyhow::Result<Vec<discuss::Model>> {
     let rows = discuss::Entity::find()
         .filter(discuss::Column::BottleId.eq(bottle_id))
         .order_by_asc(discuss::Column::CreatedAt)
@@ -250,36 +235,21 @@ const SENT_KEEP_DAYS: i64 = 90;
 
 /// 记一条「发出的瓶子转发消息 → 瓶子」映射（「取原文」按回复目标反查用），顺手懒清理
 /// 超期行。同键冲突（理论不至）就地覆盖瓶子编号。
-pub async fn record_sent(
-    db: &DatabaseConnection,
-    msg_key: &str,
-    bottle_id: i64,
-) -> anyhow::Result<()> {
+pub async fn record_sent(db: &DatabaseConnection, msg_key: &str, bottle_id: i64) -> anyhow::Result<()> {
     sent::Entity::delete_many()
         .filter(Expr::cust(format!("created_at < now() - interval '{SENT_KEEP_DAYS} days'")))
         .exec(db)
         .await?;
-    let row = sent::ActiveModel {
-        msg_key: Set(msg_key.to_owned()),
-        bottle_id: Set(bottle_id),
-        created_at: NotSet,
-    };
+    let row = sent::ActiveModel { msg_key: Set(msg_key.to_owned()), bottle_id: Set(bottle_id), created_at: NotSet };
     sent::Entity::insert(row)
-        .on_conflict(
-            OnConflict::column(sent::Column::MsgKey)
-                .update_column(sent::Column::BottleId)
-                .to_owned(),
-        )
+        .on_conflict(OnConflict::column(sent::Column::MsgKey).update_column(sent::Column::BottleId).to_owned())
         .exec(db)
         .await?;
     Ok(())
 }
 
 /// 按消息键反查瓶子编号（「取原文」回复路径）；没记过或已被清理返 `None`。
-pub async fn sent_bottle_id(
-    db: &DatabaseConnection,
-    msg_key: &str,
-) -> anyhow::Result<Option<i64>> {
+pub async fn sent_bottle_id(db: &DatabaseConnection, msg_key: &str) -> anyhow::Result<Option<i64>> {
     let row = sent::Entity::find_by_id(msg_key.to_owned()).one(db).await?;
     Ok(row.map(|r| r.bottle_id))
 }
@@ -301,11 +271,7 @@ pub async fn set_status(db: &DatabaseConnection, id: i64, status: &str) -> anyho
 }
 
 /// 列出某人投放的瓶子（未删），按时间倒序，至多 `limit` 条。
-pub async fn list_user_bottles(
-    db: &DatabaseConnection,
-    uin: i64,
-    limit: u64,
-) -> anyhow::Result<Vec<bottle::Model>> {
+pub async fn list_user_bottles(db: &DatabaseConnection, uin: i64, limit: u64) -> anyhow::Result<Vec<bottle::Model>> {
     let rows = bottle::Entity::find()
         .filter(bottle::Column::Uin.eq(uin))
         .filter(bottle::Column::Isdelete.eq(false))
@@ -334,8 +300,7 @@ pub async fn delete_bottle(
     requester: i64,
     is_master: bool,
 ) -> anyhow::Result<DeleteOutcome> {
-    let Some(b) = bottle::Entity::find_by_id(id).filter(bottle::Column::Isdelete.eq(false)).one(db).await?
-    else {
+    let Some(b) = bottle::Entity::find_by_id(id).filter(bottle::Column::Isdelete.eq(false)).one(db).await? else {
         return Ok(DeleteOutcome::NotFound);
     };
     if b.uin != requester && !is_master {

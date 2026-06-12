@@ -3,15 +3,13 @@
 //! (注册用户、消息总数、今日消息、群数、好友数)。每个远程调用各自兜底,单点失败不拖垮整体:
 //! 拿不到的字段退回 null / 0。
 
-use nagisa::async_trait;
 use nagisa::Bot;
+use nagisa::async_trait;
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::web::registry::{
-    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebListener,
-};
+use crate::web::registry::{AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebListener};
 
 pub struct OverviewProvider {
     bot: Bot,
@@ -78,21 +76,14 @@ impl WebListener for Overview {
         let stat = status.as_ref().and_then(|s| s.stat.as_ref());
         let msg_received = stat.and_then(|s| s.message_received);
         let msg_sent = stat.and_then(|s| s.message_sent);
-        let version = bot
-            .get_impl_info()
-            .await
-            .ok()
-            .map(|i| format!("{} {}", i.name, i.version));
+        let version = bot.get_impl_info().await.ok().map(|i| format!("{} {}", i.name, i.version));
         let uptime_secs = (chrono::Utc::now() - p.boot).num_seconds().max(0);
 
         // 统计计数:DB 计数 + 群/好友数(远程,失败退 0)。
         let users = count_scalar(&p.db, "SELECT count(*) AS n FROM \"user\"").await;
         let total_messages = count_scalar(&p.db, "SELECT count(*) AS n FROM chat_log").await;
-        let today_messages = count_scalar(
-            &p.db,
-            "SELECT count(*) AS n FROM chat_log WHERE time >= date_trunc('day', now())",
-        )
-        .await;
+        let today_messages =
+            count_scalar(&p.db, "SELECT count(*) AS n FROM chat_log WHERE time >= date_trunc('day', now())").await;
         let groups = bot.get_group_list(true).await.map(|v| v.len()).unwrap_or(0);
         let friends = bot.get_friend_list(true).await.map(|v| v.len()).unwrap_or(0);
         let daily = daily_messages(&p.db).await;

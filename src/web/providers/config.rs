@@ -3,13 +3,12 @@
 
 use nagisa::async_trait;
 use sea_orm::DatabaseConnection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::web::config::{ConfigSpec, ConfigStore};
 use crate::web::registry::{
-    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService,
-    WebListener,
+    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService, WebListener,
 };
 
 pub struct ConfigProvider {
@@ -33,8 +32,12 @@ impl ConsolePlugin for ConfigProvider {
 struct ConfigData(Arc<ConfigProvider>);
 #[async_trait]
 impl WebDataService for ConfigData {
-    fn key(&self) -> &'static str { "config" }
-    fn authority(&self) -> u8 { 4 }
+    fn key(&self) -> &'static str {
+        "config"
+    }
+    fn authority(&self) -> u8 {
+        4
+    }
     async fn get(&self) -> Value {
         let mut specs = Vec::new();
         let mut values = serde_json::Map::new();
@@ -44,9 +47,7 @@ impl WebDataService for ConfigData {
                 "title": spec.title,
                 "schema": (spec.schema)(),
             }));
-            let cur = self.0.store.get(spec.plugin_key)
-                .map(|v| (*v).clone())
-                .unwrap_or_else(|| (spec.default)());
+            let cur = self.0.store.get(spec.plugin_key).map(|v| (*v).clone()).unwrap_or_else(|| (spec.default)());
             values.insert(spec.plugin_key.to_string(), cur);
         }
         json!({ "specs": specs, "values": values })
@@ -56,14 +57,21 @@ impl WebDataService for ConfigData {
 struct ConfigSet(Arc<ConfigProvider>);
 #[async_trait]
 impl WebListener for ConfigSet {
-    fn event(&self) -> &'static str { "config/set" }
-    fn authority(&self) -> u8 { 4 }
+    fn event(&self) -> &'static str {
+        "config/set"
+    }
+    fn authority(&self) -> u8 {
+        4
+    }
     async fn handle(&self, args: Value, _who: AuthUser) -> Result<Value, String> {
         let plugin_key = args.get("plugin_key").and_then(|v| v.as_str()).ok_or("缺少 plugin_key")?;
         let value = args.get("value").ok_or("缺少 value")?;
         let mut found = None;
         for s in nagisa::inventory::iter::<ConfigSpec> {
-            if s.plugin_key == plugin_key { found = Some(s); break; }
+            if s.plugin_key == plugin_key {
+                found = Some(s);
+                break;
+            }
         }
         let spec = found.ok_or("未知 plugin_key")?;
         let normalized = (spec.validate)(value)?;

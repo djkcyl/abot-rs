@@ -3,19 +3,17 @@
 //! `chatlog/query` 按群或私聊对端拉取最近若干条消息,带发送者昵称、是否自身发出、原始 OneBot 内容段数组,
 //! 按时间正序返回供页面渲染。
 
-use nagisa::async_trait;
 use nagisa::Bot;
+use nagisa::async_trait;
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement, Value as SqlValue};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 const DEFAULT_LIMIT: u64 = 60;
 const MAX_LIMIT: u64 = 200;
 
-use crate::web::registry::{
-    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebListener,
-};
+use crate::web::registry::{AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebListener};
 
 pub struct ChatlogProvider {
     db: DatabaseConnection,
@@ -122,8 +120,7 @@ impl WebListener for ChatlogConversations {
             .collect();
         priv_items.sort_by_key(|p| std::cmp::Reverse(p.2));
         for (id, name, count) in priv_items {
-            conversations
-                .push(json!({ "kind": "private", "id": id, "name": name, "count": count }));
+            conversations.push(json!({ "kind": "private", "id": id, "name": name, "count": count }));
         }
 
         Ok(json!({ "conversations": conversations }))
@@ -148,11 +145,7 @@ impl WebListener for ChatlogQuery {
         let kind = args.get("kind").and_then(|v| v.as_str()).ok_or("缺少 kind")?;
         let id = args.get("id").and_then(|v| v.as_i64()).ok_or("缺少 id")?;
         let before_id = args.get("before_id").and_then(|v| v.as_i64());
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(DEFAULT_LIMIT)
-            .clamp(1, MAX_LIMIT);
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
         // 会话条件 + 值参数化:群走 group_id=$1,私聊走 group_id IS NULL AND private_peer=$1。
         let mut values: Vec<SqlValue> = Vec::new();

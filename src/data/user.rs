@@ -14,12 +14,12 @@
 use nagisa::prelude::*;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    EntityTrait, QueryFilter, Set, TransactionTrait,
+    ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    Set, TransactionTrait,
 };
 
 use crate::data::entity::{coin_log, user};
-use crate::data::level::{level_info, level_of, LevelChange, LevelInfo};
+use crate::data::level::{LevelChange, LevelInfo, level_info, level_of};
 
 /// 一个用户的可变状态句柄：一行 [`user::Model`] + 一份共享连接。
 ///
@@ -157,8 +157,7 @@ impl AUser {
             .context("批量查询用户")?;
 
         use std::collections::HashMap;
-        let mut by_uin: HashMap<i64, user::Model> =
-            existing.into_iter().map(|m| (m.uin, m)).collect();
+        let mut by_uin: HashMap<i64, user::Model> = existing.into_iter().map(|m| (m.uin, m)).collect();
 
         // 缺失的批量插（一条 INSERT .. VALUES (..),(..)），拿回带库侧缺省的行。
         let missing: Vec<i64> = order.iter().copied().filter(|u| !by_uin.contains_key(u)).collect();
@@ -231,12 +230,7 @@ impl AUser {
 
     /// **原子转账**：一个事务里带闸扣本人 + 入账对方（各一行 `coin_log`）。够则成、同步本人句柄、
     /// 返回 `true`；不够则整体回滚、返回 `false`。`amount` 应 ≥ 0；对方行不存在会先取或建。
-    pub async fn transfer_to(
-        &mut self,
-        target: i64,
-        amount: i64,
-        reason: impl Into<String>,
-    ) -> Result<bool> {
+    pub async fn transfer_to(&mut self, target: i64, amount: i64, reason: impl Into<String>) -> Result<bool> {
         let reason = reason.into();
         // 确保对方行存在（否则入账影响 0 行 → add_coin_on 报错）。
         AUser::get(&self.db, target).await?;
@@ -256,12 +250,7 @@ impl AUser {
 ///
 /// 目标行不存在（加币影响 0 行）→ 直接报错，**绝不**写「幽灵流水」（记了账却没落到任何余额）。
 /// 调用方应先经 `get`/`get_many` 建行。`conn` 可为 `&DatabaseConnection` 或 `&DatabaseTransaction`。
-pub(crate) async fn add_coin_on<C: ConnectionTrait>(
-    conn: &C,
-    uin: i64,
-    delta: i64,
-    reason: String,
-) -> Result<()> {
+pub(crate) async fn add_coin_on<C: ConnectionTrait>(conn: &C, uin: i64, delta: i64, reason: String) -> Result<()> {
     // RETURNING 取回同一条原子更新后的整行——流水的 balance 与 delta 严格对应,
     // 不另查一遍(并发下另查会读到别笔变动后的值)。
     let rows = user::Entity::update_many()
@@ -292,12 +281,7 @@ pub(crate) async fn add_coin_on<C: ConnectionTrait>(
 /// `amount` 应 ≥ 0。够则扣 + 记一行 `coin_log`（`delta = -amount`）并返回 `true`；不够则一动不动、返回
 /// `false`。可跑在连接或事务上（与扣款的其它步骤同事务原子提交）。`AUser::pay`/`transfer_to`/place 落格
 /// 都走它——花费防超支的唯一底座。
-pub(crate) async fn try_debit_on<C: ConnectionTrait>(
-    conn: &C,
-    uin: i64,
-    amount: i64,
-    reason: String,
-) -> Result<bool> {
+pub(crate) async fn try_debit_on<C: ConnectionTrait>(conn: &C, uin: i64, amount: i64, reason: String) -> Result<bool> {
     debug_assert!(amount >= 0, "try_debit_on 的 amount 应非负");
     // RETURNING 同 add_coin_on:扣款后余额随同一条原子更新取回,进流水的 balance。
     let rows = user::Entity::update_many()

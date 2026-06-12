@@ -6,8 +6,7 @@
 //! 「这里有过一张图」和它的身份。
 
 use nagisa::render::{
-    render_to_rgba, Align, Block, Color, Document, FontRole, Inline, Insets, RenderOptions,
-    TextStyle, Theme,
+    Align, Block, Color, Document, FontRole, Inline, Insets, RenderOptions, TextStyle, Theme, render_to_rgba,
 };
 
 /// 渲染一张「图片已失效」占位 WebP(每次调用随机一组渐变色)。
@@ -32,15 +31,7 @@ pub fn missing_image_webp(md5: &str) -> anyhow::Result<Vec<u8>> {
                 "这里本来有张图,但已经无法显示",
                 TextStyle { color: Some(white(225)), size: 0.85, ..Default::default() },
             ),
-            line(
-                md5,
-                TextStyle {
-                    color: Some(white(190)),
-                    size: 0.72,
-                    font: FontRole::Mono,
-                    ..Default::default()
-                },
-            ),
+            line(md5, TextStyle { color: Some(white(190)), size: 0.72, font: FontRole::Mono, ..Default::default() }),
         ],
     };
     let mut theme = Theme::dark();

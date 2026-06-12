@@ -5,12 +5,10 @@
 
 use nagisa::async_trait;
 use nagisa::{Bot, FriendInfo, MemberInfo, Role, Uin};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::web::registry::{
-    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebListener,
-};
+use crate::web::registry::{AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebListener};
 
 pub struct ContactsProvider {
     bot: Bot,
@@ -71,12 +69,8 @@ impl WebListener for ContactsList {
 
         // bot 在每个群里的角色:逐群并发查 get_group_member_info(g, self_id),失败的给 null。
         let self_id = bot.self_id();
-        let roles = futures::future::join_all(
-            groups
-                .iter()
-                .map(|g| bot.get_group_member_info(g.group, self_id, false)),
-        )
-        .await;
+        let roles =
+            futures::future::join_all(groups.iter().map(|g| bot.get_group_member_info(g.group, self_id, false))).await;
 
         let groups_json: Vec<Value> = groups
             .iter()
@@ -112,24 +106,14 @@ impl WebListener for GroupMembers {
     async fn handle(&self, args: Value, _who: AuthUser) -> Result<Value, String> {
         let bot = &self.0;
         let group = args.get("group").and_then(|v| v.as_i64()).ok_or("缺少 group")?;
-        let members = bot
-            .get_group_member_list(Uin(group), false)
-            .await
-            .map_err(|e| e.to_string())?;
+        let members = bot.get_group_member_list(Uin(group), false).await.map_err(|e| e.to_string())?;
         // 全员禁言状态:取自 get_group_info 的 shut_up_all_time。Some(0)=已知未开、Some(非0)=已知开启、
         // None=协议端不回该字段(未知)。前端据此:已知给开关、未知退回显式按钮。
-        let whole_muted = bot
-            .get_group_info(Uin(group), false)
-            .await
-            .ok()
-            .and_then(|g| g.shut_up_all_time)
-            .map(|t| t != 0);
+        let whole_muted =
+            bot.get_group_info(Uin(group), false).await.ok().and_then(|g| g.shut_up_all_time).map(|t| t != 0);
         // bot 自身在该群的角色:从成员表里挑出 uin == self_id 的那条。
         let bot_uin = bot.self_id().0;
-        let bot_role = members
-            .iter()
-            .find(|m| m.user.0 == bot_uin)
-            .map(|m| role_str(m.role));
+        let bot_role = members.iter().find(|m| m.user.0 == bot_uin).map(|m| role_str(m.role));
         Ok(json!({
             "members": members.iter().map(member_json).collect::<Vec<_>>(),
             "whole_muted": whole_muted,
@@ -144,10 +128,7 @@ struct GroupAction(Bot);
 impl GroupAction {
     /// 读必需的 user id（多数动作需要）。
     fn user_arg(args: &Value) -> Result<Uin, String> {
-        args.get("user")
-            .and_then(|v| v.as_i64())
-            .map(Uin)
-            .ok_or_else(|| "缺少 user".to_string())
+        args.get("user").and_then(|v| v.as_i64()).map(Uin).ok_or_else(|| "缺少 user".to_string())
     }
 }
 
@@ -161,11 +142,7 @@ impl WebListener for GroupAction {
     }
     async fn handle(&self, args: Value, who: AuthUser) -> Result<Value, String> {
         let action = args.get("action").and_then(|v| v.as_str()).ok_or("缺少 action")?;
-        let group = args
-            .get("group")
-            .and_then(|v| v.as_i64())
-            .map(Uin)
-            .ok_or("缺少 group")?;
+        let group = args.get("group").and_then(|v| v.as_i64()).map(Uin).ok_or("缺少 group")?;
 
         let bot = &self.0;
         let result = match action {

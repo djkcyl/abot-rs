@@ -8,7 +8,7 @@
 //! 一列，上亮下暗两组色样 + 名字标），渲不出退文字。
 
 use nagisa::prelude::*;
-use nagisa::render::{render_document, Align, Doc, Insets};
+use nagisa::render::{Align, Doc, Insets, render_document};
 
 use crate::data::AUser;
 use crate::imaging::{self, UserTheme};
@@ -75,11 +75,7 @@ fn mode_text(pref: &str) -> String {
 /// 主题色库键的中文呈现(脏值按缺省处理,与出图一致)。
 fn color_text(v: &str) -> String {
     let name = imaging::theme_spec(v).name;
-    if v.is_empty() {
-        format!("{name}（默认）")
-    } else {
-        name.to_string()
-    }
+    if v.is_empty() { format!("{name}（默认）") } else { name.to_string() }
 }
 
 /// 主题名一览(提示语用)。
@@ -106,23 +102,20 @@ async fn apply(user: &mut AUser, settings: &[Setting]) -> Result<String> {
 }
 
 /// `主题` → 设置出图主题（颜色与亮暗）。带参数直接设，缺参数进交互式配置。
-#[command("主题", "theme", mention_me,
+#[command(
+    "主题",
+    "theme",
+    mention_me,
     description = "设置出图的主题色和亮暗",
-    usage = "发送「主题 松石青」换主题色，「主题 暗」换亮暗，也可以一起发：「主题 暗 珊瑚粉」。颜色可选：远黛蓝（默认）／松石青／落霞橙／鸢尾紫／珊瑚粉；亮暗可选：亮／暗／自动（按日出日落，天黑换暗色）。群聊里要 @ 机器人才会响应。只发「主题」会出一张色板，按提示回复就能改。")]
-async fn theme(
-    reply: Reply,
-    mut user: AUser,
-    session: Session,
-    args: Args<ThemeArgs>,
-) -> HandlerResult {
+    usage = "发送「主题 松石青」换主题色，「主题 暗」换亮暗，也可以一起发：「主题 暗 珊瑚粉」。颜色可选：远黛蓝（默认）／松石青／落霞橙／鸢尾紫／珊瑚粉；亮暗可选：亮／暗／自动（按日出日落，天黑换暗色）。群聊里要 @ 机器人才会响应。只发「主题」会出一张色板，按提示回复就能改。"
+)]
+async fn theme(reply: Reply, mut user: AUser, session: Session, args: Args<ThemeArgs>) -> HandlerResult {
     let line = [args.0.first, args.0.second].into_iter().flatten().collect::<Vec<_>>().join(" ");
 
     // —— 带参数:直接解析落库,回执色板。——
     if !line.trim().is_empty() {
         let Some(settings) = parse_line(&line) else {
-            reply
-                .reply(format!("没这个颜色，可选：{}；亮暗：亮 / 暗 / 自动", theme_names()))
-                .await?;
+            reply.reply(format!("没这个颜色，可选：{}；亮暗：亮 / 暗 / 自动", theme_names())).await?;
             return Ok(());
         };
         let said = apply(&mut user, &settings).await?;
@@ -176,10 +169,7 @@ async fn theme(
             match parse_line(t) {
                 Some(v) if !v.is_empty() => WaitFlow::Done(v),
                 _ => {
-                    let hint = format!(
-                        "没这个颜色，可选：{}；亮暗：亮 / 暗 / 自动；回复「取消」退出",
-                        theme_names()
-                    );
+                    let hint = format!("没这个颜色，可选：{}；亮暗：亮 / 暗 / 自动；回复「取消」退出", theme_names());
                     if let Err(e) = reply_ref.reply(hint).await {
                         tracing::warn!(error = %e, "主题交互追问发送失败");
                     }
@@ -275,10 +265,7 @@ pub fn palette_card(theme_pref: &str, color_pref: &str, title: &str) -> anyhow::
                     p.align(Align::Center);
                     if spec.key == current_key {
                         p.styled(format!(" ✓ {} ", spec.name), |s| {
-                            s.bg(&t.palette.primary)
-                                .color(&t.palette.on_color)
-                                .weight(600)
-                                .size(0.85);
+                            s.bg(&t.palette.primary).color(&t.palette.on_color).weight(600).size(0.85);
                         });
                     } else {
                         p.styled(spec.name, |s| {
@@ -299,8 +286,5 @@ pub fn palette_card(theme_pref: &str, color_pref: &str, title: &str) -> anyhow::
         );
     });
 
-    Ok(render_document(
-        &d.build(),
-        &t.opts().with_width(720.0).with_padding(Insets::symmetric(28.0, 34.0)),
-    )?)
+    Ok(render_document(&d.build(), &t.opts().with_width(720.0).with_padding(Insets::symmetric(28.0, 34.0)))?)
 }

@@ -32,44 +32,19 @@ pub struct ThemeSpec {
 /// 固定的数字不至于因为换主题而变味。
 pub const THEMES: &[ThemeSpec] = &[
     ThemeSpec {
-        key: "indigo",
-        name: "远黛蓝",
-        primary: "#4c63b6",
-        deep: "#7a5cc4",
-        vivid: "#0e9488",
-        warm: "#bd6b32",
+        key: "indigo", name: "远黛蓝", primary: "#4c63b6", deep: "#7a5cc4", vivid: "#0e9488", warm: "#bd6b32"
     },
     ThemeSpec {
-        key: "teal",
-        name: "松石青",
-        primary: "#0e9488",
-        deep: "#1f6e9c",
-        vivid: "#5f9e2e",
-        warm: "#b8872e",
+        key: "teal", name: "松石青", primary: "#0e9488", deep: "#1f6e9c", vivid: "#5f9e2e", warm: "#b8872e"
     },
     ThemeSpec {
-        key: "orange",
-        name: "落霞橙",
-        primary: "#c2661f",
-        deep: "#b03346",
-        vivid: "#8aa32e",
-        warm: "#c79a2e",
+        key: "orange", name: "落霞橙", primary: "#c2661f", deep: "#b03346", vivid: "#8aa32e", warm: "#c79a2e"
     },
     ThemeSpec {
-        key: "purple",
-        name: "鸢尾紫",
-        primary: "#7a5cc4",
-        deep: "#4c63b6",
-        vivid: "#b04fa3",
-        warm: "#bd6b32",
+        key: "purple", name: "鸢尾紫", primary: "#7a5cc4", deep: "#4c63b6", vivid: "#b04fa3", warm: "#bd6b32"
     },
     ThemeSpec {
-        key: "pink",
-        name: "珊瑚粉",
-        primary: "#c75c8a",
-        deep: "#a23aa8",
-        vivid: "#8a5cc4",
-        warm: "#c2742e",
+        key: "pink", name: "珊瑚粉", primary: "#c75c8a", deep: "#a23aa8", vivid: "#8a5cc4", warm: "#c2742e"
     },
 ];
 
@@ -225,11 +200,8 @@ pub fn pick_dark(pref: &str) -> bool {
 /// nagisa-render 排版 · A60`——名号加重立体、各带一个含蓄的品牌色(bot 靛蓝 / 框架青绿 /
 /// 引擎紫 / 作者暖橙),连接词浅灰斜体,居中。品牌色按底色明暗各调一档。
 fn brand_footer(dark: bool, band: &str) -> PageChrome {
-    let (c_bot, c_fw, c_render, c_author) = if dark {
-        ("#8fa3e8", "#3ec9b8", "#a98ee8", "#e0a06a")
-    } else {
-        ("#4c63b6", "#0e9488", "#7a5cc4", "#bd6b32")
-    };
+    let (c_bot, c_fw, c_render, c_author) =
+        if dark { ("#8fa3e8", "#3ec9b8", "#a98ee8", "#e0a06a") } else { ("#4c63b6", "#0e9488", "#7a5cc4", "#bd6b32") };
     PageChrome::rich(move |p| {
         p.styled("ABot", |s| {
             s.weight(600).color(c_bot);
@@ -270,11 +242,7 @@ fn fit_contrast(hex: &str, dark: bool) -> String {
     let (h, s, l) = rgb_to_hsl(r, g, b);
     let y = luma(r, g, b);
     let l2 = if dark {
-        if y >= 0.28 {
-            l
-        } else {
-            search_l(h, s, 0.28, l..=1.0)
-        }
+        if y >= 0.28 { l } else { search_l(h, s, 0.28, l..=1.0) }
     } else if y <= 0.25 {
         l
     } else {
@@ -298,9 +266,7 @@ fn parse_hex(s: &str) -> Option<(u8, u8, u8)> {
     let v = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
     match s.as_bytes() {
         [r, g, b] => Some((v(*r)? * 17, v(*g)? * 17, v(*b)? * 17)),
-        [r1, r2, g1, g2, b1, b2] => {
-            Some((v(*r1)? * 16 + v(*r2)?, v(*g1)? * 16 + v(*g2)?, v(*b1)? * 16 + v(*b2)?))
-        }
+        [r1, r2, g1, g2, b1, b2] => Some((v(*r1)? * 16 + v(*r2)?, v(*g1)? * 16 + v(*g2)?, v(*b1)? * 16 + v(*b2)?)),
         _ => None,
     }
 }
@@ -370,10 +336,7 @@ pub async fn qq_avatar(uin: i64) -> Option<Vec<u8>> {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     let client = CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()
-            .unwrap_or_default()
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().unwrap_or_default()
     });
     let url = format!("https://q.qlogo.cn/g?b=qq&nk={uin}&s=640");
     let resp = match client.get(&url).send().await.and_then(|r| r.error_for_status()) {

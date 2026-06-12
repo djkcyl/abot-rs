@@ -92,20 +92,17 @@ async fn main() -> anyhow::Result<()> {
     //    框架的 Ready 事件里给主人发上线通知）、可选 web 控制台（绑不上端口只记 warn、
     //    不拖垮 bot）、顶层可读事件日志、OneBot 正向 WS、Ctrl-C。
     let login_gate = abot::web::auth::LoginGate::new();
-    let authority = abot::web::auth::AuthorityResolver::new(
-        cfg.master,
-        cfg.superusers.iter().copied().collect(),
-    );
+    let authority = abot::web::auth::AuthorityResolver::new(cfg.master, cfg.superusers.iter().copied().collect());
     let mut app = App::new()
         .restore_switches(switches) // 装载持久化的插件开关覆盖
         .data(db.clone())
         .service_data(db.clone())
         .data(Master(cfg.master))
-        .data(config_store.clone())         // 插件经 State<ConfigStore> 读
+        .data(config_store.clone()) // 插件经 State<ConfigStore> 读
         .service_data(config_store.clone()) // 控制台 ConfigProvider 用
-        .data(login_gate.clone())           // 登录命令经 State<LoginGate> 取
-        .service_data(login_gate.clone())   // 控制台 prepare 经 bus 取(同一份)
-        .service_data(authority.clone())    // 控制台权限解析
+        .data(login_gate.clone()) // 登录命令经 State<LoginGate> 取
+        .service_data(login_gate.clone()) // 控制台 prepare 经 bus 取(同一份)
+        .service_data(authority.clone()) // 控制台权限解析
         .service_data(abot::web::BootTime(boot)) // 控制台总览算在线时长
         .superusers(cfg.superusers.clone())
         .service_optional(abot::web::ConsoleService::new(cfg.web_bind))
@@ -120,8 +117,7 @@ async fn main() -> anyhow::Result<()> {
     app = app.service_data(enabled.clone());
     // 也作为 handler 数据注入:命令经 State<Arc<EnabledSet>> 读开关(help 给已停用的命令标注)。
     app = app.data(enabled);
-    app.run_onebot(OneBotConfig::new(&cfg.onebot_ws), nagisa::ctrl_c_shutdown())
-        .await?;
+    app.run_onebot(OneBotConfig::new(&cfg.onebot_ws), nagisa::ctrl_c_shutdown()).await?;
 
     Ok(())
 }

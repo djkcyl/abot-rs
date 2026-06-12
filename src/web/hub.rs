@@ -12,9 +12,9 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::response::Response;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::{Mutex, mpsc};
 
 /// 单个连接的推送口 + 鉴权态。
 struct Client {
@@ -98,10 +98,7 @@ impl Hub {
         let clients = self.clients.lock().await;
         for client in clients.values() {
             if Self::allowed(client.auth, required) {
-                let _ = client.tx.send(ServerMsg::Data {
-                    key: key.to_string(),
-                    value: value.clone(),
-                });
+                let _ = client.tx.send(ServerMsg::Data { key: key.to_string(), value: value.clone() });
             }
         }
     }
@@ -112,10 +109,7 @@ impl Hub {
         let clients = self.clients.lock().await;
         for client in clients.values() {
             if Self::allowed(client.auth, required) {
-                let _ = client.tx.send(ServerMsg::Patch {
-                    key: key.to_string(),
-                    value: value.clone(),
-                });
+                let _ = client.tx.send(ServerMsg::Patch { key: key.to_string(), value: value.clone() });
             }
         }
     }
@@ -125,9 +119,7 @@ impl Hub {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, mut rx) = mpsc::unbounded_channel::<ServerMsg>();
         let auth = match token {
-            Some(t) => crate::web::auth::lookup_token(&self.db, &t)
-                .await
-                .unwrap_or(AuthUser { uin: 0, authority: 0 }),
+            Some(t) => crate::web::auth::lookup_token(&self.db, &t).await.unwrap_or(AuthUser { uin: 0, authority: 0 }),
             None => AuthUser { uin: 0, authority: 0 },
         };
         self.clients.lock().await.insert(id, Client { tx, auth });
@@ -136,10 +128,7 @@ impl Hub {
         for (key, ds) in &self.data_services {
             if Self::allowed(auth, ds.authority()) {
                 let value = ds.get().await;
-                if send(&mut socket, ServerMsg::Data { key: (*key).to_string(), value })
-                    .await
-                    .is_err()
-                {
+                if send(&mut socket, ServerMsg::Data { key: (*key).to_string(), value }).await.is_err() {
                     self.clients.lock().await.remove(&id);
                     return;
                 }

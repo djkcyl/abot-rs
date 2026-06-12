@@ -16,12 +16,12 @@
 use nagisa::prelude::*;
 use rand::RngExt as _;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, DatabaseConnection, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
 };
 
-use crate::data::level::{LevelChange, LevelInfo};
 use crate::data::AUser;
+use crate::data::level::{LevelChange, LevelInfo};
 use crate::plugins::sign::entity::log;
 
 /// 签到结果:今天已签到(`Already`)或本次签到完成(`Done`)。
@@ -104,11 +104,7 @@ pub fn streak_ending_at(days_desc: &[chrono::NaiveDate], from: chrono::NaiveDate
 /// 否则 0。
 pub fn live_streak(days_desc: &[chrono::NaiveDate], today: chrono::NaiveDate) -> i32 {
     let s = streak_ending_at(days_desc, today);
-    if s > 0 {
-        s
-    } else {
-        streak_ending_at(days_desc, today - chrono::Duration::days(1))
-    }
+    if s > 0 { s } else { streak_ending_at(days_desc, today - chrono::Duration::days(1)) }
 }
 
 /// 每日签到。同一「签到日」(业务日口径,凌晨 4 点边界)重复调用返回
@@ -163,15 +159,10 @@ pub async fn do_sign(db: &DatabaseConnection, user: &mut AUser) -> Result<SignOu
 
     // 插当日流水行——这是签到唯一的状态写入,也是并发去重闸:撞 (uin, day) 主键说明
     // 另一次同日签到抢先,回读确认后按 Already 处理(不重复发奖)。
-    let insert = log::ActiveModel {
-        uin: Set(uin),
-        day: Set(today),
-        gold: Set(gold_add),
-        exp: Set(exp_gain),
-        at: NotSet,
-    }
-    .insert(db)
-    .await;
+    let insert =
+        log::ActiveModel { uin: Set(uin), day: Set(today), gold: Set(gold_add), exp: Set(exp_gain), at: NotSet }
+            .insert(db)
+            .await;
     if let Err(e) = insert {
         if log::Entity::find_by_id((uin, today)).one(db).await.ok().flatten().is_some() {
             return Ok(SignOutcome::Already);
@@ -226,7 +217,6 @@ pub async fn calendar_data(
     let all = days_desc(db, uin).await?;
     let total_sign = all.len() as i32;
     let continue_sign = live_streak(&all, today);
-    let days =
-        all.into_iter().rev().filter(|d| d.year() == year && d.month() == month).collect();
+    let days = all.into_iter().rev().filter(|d| d.year() == year && d.month() == month).collect();
     Ok(CalendarData { days, continue_sign, total_sign })
 }

@@ -22,8 +22,8 @@ use std::time::Duration;
 use nagisa::prelude::*;
 use sea_orm::DatabaseConnection;
 
-use crate::data::{AUser, Db};
 use crate::COIN_NAME;
+use crate::data::{AUser, Db};
 use logic::PlaceResult;
 
 mod colors;
@@ -45,10 +45,8 @@ plugin! {
 
 /// 把一段文本解析成坐标 `(x, y)`:用逗号 / 空白 / 常见分隔符切成两段,各解析为整数。
 fn parse_xy(s: &str) -> Option<(i32, i32)> {
-    let parts: Vec<&str> = s
-        .split([',', '，', ' ', '\t', ';', '；', '|', ':', '：'])
-        .filter(|t| !t.is_empty())
-        .collect();
+    let parts: Vec<&str> =
+        s.split([',', '，', ' ', '\t', ';', '；', '|', ':', '：']).filter(|t| !t.is_empty()).collect();
     if parts.len() != 2 {
         return None;
     }
@@ -88,11 +86,13 @@ fn cooldown_msg(remain_min: i64, interval_min: i64, level: i64) -> String {
 }
 
 /// `画板` —— 无参看全图;`画板 x,y` 看放大窗;`画板 净` 出干净分享图。
-#[command("画板",
+#[command(
+    "画板",
     order = 1,
     description = "看公共像素画板",
     usage = "发送「画板」看全图，「画板 x,y」以该点为心看局部放大窗（每格更大、带坐标刻度和准星），\
-「画板 净」出一张无网格无刻度的干净分享图（带日期水印）。画布 256×144 格、32 色，所有群共用同一块。")]
+「画板 净」出一张无网格无刻度的干净分享图（带日期水印）。画布 256×144 格、32 色，所有群共用同一块。"
+)]
 async fn place_view(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
     let rest = args.0.trim();
     let img = if rest.is_empty() {
@@ -120,10 +120,12 @@ async fn place_view(reply: Reply, Db(db): Db, args: ArgText) -> HandlerResult {
 }
 
 /// `画板色板` —— 32 色编号块图 + 文字图例。
-#[command("画板色板",
+#[command(
+    "画板色板",
     order = 3,
     description = "看画板的 32 色调色板",
-    usage = "发送「画板色板」，出一张 32 色的编号块图和文字图例。作画时按编号或颜色名选色。")]
+    usage = "发送「画板色板」，出一张 32 色的编号块图和文字图例。作画时按编号或颜色名选色。"
+)]
 async fn palette(reply: Reply) -> HandlerResult {
     match render::render_palette() {
         Ok(bytes) => reply.msg().image_bytes(bytes).text(colors::legend()).send().await?,
@@ -138,19 +140,15 @@ async fn palette(reply: Reply) -> HandlerResult {
 /// `画板回放` —— 画布历程 GIF。无参出**当日缓存**的全量回放(免费,业务日内一份,
 /// 后台日任务预热、缺了首触发现做补上);`N天` 是现做的窗口回放(首帧为窗口起点时刻
 /// 的真实画布),按窗内笔数计费(每 1000 笔 1 币,封顶 88),先报价、y/n 确认再扣。
-#[command("画板回放",
+#[command(
+    "画板回放",
     order = 5,
     description = "把画板历程做成 GIF 回放",
     usage = "发送「画板回放」看全量回放（每天更新一份，免费），最长 30 秒，节奏按落格总量自动调。\
 「画板回放 7天」现做最近 7 天的回放（从当时的画布演变到现在），按量收费：每 1000 笔 1 金币、\
-封顶 88，做之前会报价，回复 y 才扣。")]
-async fn replay_cmd(
-    reply: Reply,
-    Db(db): Db,
-    mut user: AUser,
-    session: Session,
-    args: ArgText,
-) -> HandlerResult {
+封顶 88，做之前会报价，回复 y 才扣。"
+)]
+async fn replay_cmd(reply: Reply, Db(db): Db, mut user: AUser, session: Session, args: ArgText) -> HandlerResult {
     // —— 无参:当日缓存,免费。——
     let Some(days) = parse_replay_args(args.0.trim()).days else {
         match replay::full_cached(&db).await? {
@@ -170,18 +168,11 @@ async fn replay_cmd(
     let cost = logic::replay_cost(strokes);
     if user.coin() < cost {
         reply
-            .reply(format!(
-                "这段回放有 {strokes} 笔，现做要 {cost} {COIN_NAME}，你只有 {} {COIN_NAME}",
-                user.coin()
-            ))
+            .reply(format!("这段回放有 {strokes} 笔，现做要 {cost} {COIN_NAME}，你只有 {} {COIN_NAME}", user.coin()))
             .await?;
         return Ok(());
     }
-    reply
-        .reply(format!(
-            "最近 {days} 天共 {strokes} 笔，现做要 {cost} {COIN_NAME}。回复 y 确认、n 取消"
-        ))
-        .await?;
+    reply.reply(format!("最近 {days} 天共 {strokes} 笔，现做要 {cost} {COIN_NAME}。回复 y 确认、n 取消")).await?;
     let waiter = session.waiter().from_starter().build();
     let confirmed = waiter
         .recv_parse(Duration::from_secs(60), "取消", |s| match s.trim().to_lowercase().as_str() {
@@ -237,12 +228,9 @@ async fn replay_warm(_r: Ready, Db(db): Db) -> HandlerResult {
             if let Err(e) = replay::warm_cache(&db).await {
                 tracing::warn!(error = %e, "预热回放缓存失败");
             }
-            let next = crate::data::util::business_day_start()
-                + chrono::Duration::days(1)
-                + chrono::Duration::minutes(5);
-            let wait = (next - chrono::Local::now().fixed_offset())
-                .to_std()
-                .unwrap_or(Duration::from_secs(3600));
+            let next =
+                crate::data::util::business_day_start() + chrono::Duration::days(1) + chrono::Duration::minutes(5);
+            let wait = (next - chrono::Local::now().fixed_offset()).to_std().unwrap_or(Duration::from_secs(3600));
             tokio::time::sleep(wait).await;
         }
     });
@@ -257,8 +245,7 @@ fn parse_replay_args(rest: &str) -> replay::ReplayArgs {
 
 /// `7天` / `7d` / `7day` → `Some(7)`;无天数后缀 → `None`。
 fn parse_days(low: &str) -> Option<i64> {
-    let num =
-        low.trim_end_matches('天').trim_end_matches("days").trim_end_matches("day").trim_end_matches('d');
+    let num = low.trim_end_matches('天').trim_end_matches("days").trim_end_matches("day").trim_end_matches('d');
     if num == low {
         return None; // 没后缀,不当天数
     }
@@ -270,18 +257,14 @@ fn parse_days(low: &str) -> Option<i64> {
 /// **非超管**只能查**自己的**记录(任何过滤参数都忽略,也查不了别人)。一律**合并转发**:同一人多笔
 /// 用**嵌套合并转发**收拢,每条消息合并多笔(≤3000 字),顶层最多 100 子消息(嵌套转发算 1)。
 /// 每笔带**绘制序号 #id**。
-#[command("画板历史",
+#[command(
+    "画板历史",
     order = 4,
     description = "看自己在画板上的落格记录",
     usage = "发送「画板历史」，以合并转发列出自己每一笔落格（带绘制序号、坐标、颜色、时间）。\
-超管还可加「x,y」查某格被谁画过、加「@某人」或 QQ 号查某人的落格，普通人只能看自己的。")]
-async fn history(
-    reply: Reply,
-    Db(db): Db,
-    m: MessageEvent,
-    sus: State<Superusers>,
-    args: ArgText,
-) -> HandlerResult {
+超管还可加「x,y」查某格被谁画过、加「@某人」或 QQ 号查某人的落格，普通人只能看自己的。"
+)]
+async fn history(reply: Reply, Db(db): Db, m: MessageEvent, sus: State<Superusers>, args: ArgText) -> HandlerResult {
     let sender = m.sender.0;
     let is_su = (*sus).0.contains(&Uin(sender));
     let rest = args.0.trim();
@@ -378,12 +361,14 @@ fn history_segments(me: Uin, header: &str, rows: &[entity::history::Model]) -> V
 
 /// `画板作画` —— 快捷 `x,y 颜色` 一步落格;否则进区块导航引导(`#N` 选块 / `x,y` 指定点 / 空→总览选块)。
 /// 同人并发经 `single_flight` 串行(防双击)。
-#[command("画板作画",
+#[command(
+    "画板作画",
     order = 2,
     description = "在公共画板上落一个格子",
     usage = "发送「画板作画 x,y 颜色」一步落格，坐标如 100,72（x 0-255、y 0-143），颜色取调色板编号或颜色名；\
 也可只发「画板作画」按区块导航一步步选位选色，或「画板作画 #N」先进某区块。每落一格按累计落格量缓涨地扣币（1 起、封顶 20）、\
-加 2 经验，并进入冷却（2 小时起，等级越高越短、最低 15 分钟）。")]
+加 2 经验，并进入冷却（2 小时起，等级越高越短、最低 15 分钟）。"
+)]
 async fn draw(reply: Reply, user: AUser, session: Session, args: ArgText) -> HandlerResult {
     // user 已持同一份连接（内部 Arc）；直接借用,不再单取 Db。
     let db = user.db();
@@ -467,21 +452,12 @@ async fn pick_coord_in_block(
     n: u8,
 ) -> Result<Option<(i32, i32)>> {
     let img = render::render_block(db, n).await?;
-    reply
-        .msg()
-        .image_bytes(img)
-        .text(format!("区块 #{n}，回要画的坐标 x,y（「取消」退出）"))
-        .send()
-        .await?;
+    reply.msg().image_bytes(img).text(format!("区块 #{n}，回要画的坐标 x,y（「取消」退出）")).send().await?;
     recv_coord(reply, waiter).await
 }
 
 /// 发总览(带区块号)→ 等「区块号 #N」或「坐标 x,y」;选了区块再进区块图等坐标。
-async fn pick_target_overview(
-    reply: &Reply,
-    db: &DatabaseConnection,
-    waiter: &Waiter,
-) -> Result<Option<(i32, i32)>> {
+async fn pick_target_overview(reply: &Reply, db: &DatabaseConnection, waiter: &Waiter) -> Result<Option<(i32, i32)>> {
     let img = render::render_overview(db).await?;
     reply
         .msg()
@@ -553,10 +529,8 @@ async fn finish_place(
 ) -> HandlerResult {
     match logic::try_place(user, db, group_id, x, y, color).await? {
         PlaceResult::Placed { cost, balance } => {
-            let line = format!(
-                "已落格 ({x},{y}) {}，花费 {cost} {COIN_NAME}，+2 经验，余额 {balance}",
-                colors::name(color)
-            );
+            let line =
+                format!("已落格 ({x},{y}) {}，花费 {cost} {COIN_NAME}，+2 经验，余额 {balance}", colors::name(color));
             let mut msg = reply.msg().text(line);
             if let Ok(zoom) = render::render_zoom(db, x, y).await {
                 msg = msg.image_bytes(zoom);
@@ -578,5 +552,3 @@ async fn finish_place(
     }
     Ok(())
 }
-
-

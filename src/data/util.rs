@@ -59,11 +59,7 @@ where
     A: ActiveModelTrait<Entity = E> + ActiveModelBehavior + Send,
     E::Model: IntoActiveModel<A>,
 {
-    if let Some(model) = E::find_by_id(pk.clone())
-        .one(db)
-        .await
-        .with_context(|| format!("查询{what}"))?
-    {
+    if let Some(model) = E::find_by_id(pk.clone()).one(db).await.with_context(|| format!("查询{what}"))? {
         return Ok((model, false));
     }
 

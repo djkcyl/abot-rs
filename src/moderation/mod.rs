@@ -75,12 +75,7 @@ impl ContentModerator {
     /// 审核文本：本地关键词 + 腾讯云文本审核取并集。
     pub async fn moderate_text(&self, text: &str) -> Verdict {
         if self.keywords.text_hit(text) {
-            return Verdict {
-                safe: false,
-                label: "Keyword".into(),
-                sub_label: String::new(),
-                source: "local",
-            };
+            return Verdict { safe: false, label: "Keyword".into(), sub_label: String::new(), source: "local" };
         }
         match &self.tencent {
             Some(cfg) => match tencent::text_moderation(cfg, text).await {
@@ -97,12 +92,7 @@ impl ContentModerator {
     /// 审核图片：本地二维码 + 腾讯云图片审核取并集。
     pub async fn moderate_image(&self, bytes: &[u8]) -> Verdict {
         if has_qrcode(bytes) {
-            return Verdict {
-                safe: false,
-                label: "AD".into(),
-                sub_label: "QRCode".into(),
-                source: "local",
-            };
+            return Verdict { safe: false, label: "AD".into(), sub_label: "QRCode".into(), source: "local" };
         }
         match &self.tencent {
             Some(cfg) => match tencent::image_moderation(cfg, bytes).await {
@@ -137,12 +127,7 @@ fn load_keywords() -> Vec<String> {
         return Vec::new();
     };
     match std::fs::read_to_string(&path) {
-        Ok(content) => content
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(str::to_string)
-            .collect(),
+        Ok(content) => content.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect(),
         Err(e) => {
             tracing::warn!(file = %path, error = %e, "读取关键词词表失败,按空表处理");
             Vec::new()

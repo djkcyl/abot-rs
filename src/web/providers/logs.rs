@@ -4,13 +4,11 @@
 //! `get()` 返回当前整段缓冲,用于连接即推的回填;之后的实时行由日志泵经 `Hub::broadcast_patch` 增量送达。
 
 use nagisa::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::web::registry::{
-    ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService,
-};
 use crate::web::LogBuf;
+use crate::web::registry::{ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService};
 
 /// 日志缓冲 Provider。持有与日志泵共享的环形缓冲。
 pub struct LogsProvider {

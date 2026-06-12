@@ -6,7 +6,7 @@
 use nagisa::async_trait;
 use nagisa::{Peer, Segment, Uin};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::web::registry::AuthUser;
 use crate::web::review::{Action, Column, Entry, ReviewContext, ReviewSource};
@@ -19,12 +19,7 @@ struct BottleReviewSource;
 
 /// 取 `moderation` JSON 里的 `label`；取不到给空串。
 fn hit_label(moderation: &Option<Value>) -> String {
-    moderation
-        .as_ref()
-        .and_then(|m| m.get("label"))
-        .and_then(|l| l.as_str())
-        .unwrap_or("")
-        .to_string()
+    moderation.as_ref().and_then(|m| m.get("label")).and_then(|l| l.as_str()).unwrap_or("").to_string()
 }
 
 /// `images` JSONB 数组的长度（非数组按 0）。
@@ -107,12 +102,7 @@ impl ReviewSource for BottleReviewSource {
                 let images: Vec<String> = b
                     .images
                     .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str())
-                            .map(crate::web::media::signed_path)
-                            .collect()
-                    })
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).map(crate::web::media::signed_path).collect())
                     .unwrap_or_default();
                 json!({
                     "id": b.id,
@@ -133,13 +123,7 @@ impl ReviewSource for BottleReviewSource {
         }
     }
 
-    async fn handle(
-        &self,
-        action: &str,
-        id: &str,
-        _who: AuthUser,
-        ctx: &ReviewContext,
-    ) -> Result<(), String> {
+    async fn handle(&self, action: &str, id: &str, _who: AuthUser, ctx: &ReviewContext) -> Result<(), String> {
         let id: i64 = id.parse().map_err(|_| "编号非法".to_string())?;
         let b = logic::get_bottle(&ctx.db, id)
             .await

@@ -16,9 +16,7 @@ const KEY: &str = "enabled";
 
 /// 从 `setting` 行读出持久化的开关覆盖。缺行或解析失败 → `EnabledOverrides::default()`。
 pub async fn load_overrides(db: &DatabaseConnection) -> EnabledOverrides {
-    let row = setting::Entity::find_by_id((PLUGIN_KEY.to_string(), KEY.to_string()))
-        .one(db)
-        .await;
+    let row = setting::Entity::find_by_id((PLUGIN_KEY.to_string(), KEY.to_string())).one(db).await;
     match row {
         Ok(Some(m)) => serde_json::from_value(m.value).unwrap_or_default(),
         _ => EnabledOverrides::default(),
@@ -26,10 +24,7 @@ pub async fn load_overrides(db: &DatabaseConnection) -> EnabledOverrides {
 }
 
 /// 把当前开关覆盖快照写回 `setting` 行(upsert)。
-pub async fn store_overrides(
-    db: &DatabaseConnection,
-    ov: &EnabledOverrides,
-) -> Result<(), String> {
+pub async fn store_overrides(db: &DatabaseConnection, ov: &EnabledOverrides) -> Result<(), String> {
     let value = serde_json::to_value(ov).map_err(|e| e.to_string())?;
     let now = chrono::Utc::now().fixed_offset();
     let am = setting::ActiveModel {

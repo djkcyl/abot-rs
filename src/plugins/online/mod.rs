@@ -31,10 +31,8 @@ async fn notice(ready: Ready, bot: Bot, State(master): State<Master>) -> Handler
     }
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     // 只数命令型触发器(registered_triggers 含事件型,不能直接当命令数)。
-    let commands = nagisa::registered_triggers()
-        .iter()
-        .filter(|t| matches!(t.kind, nagisa::TriggerKind::Command))
-        .count();
+    let commands =
+        nagisa::registered_triggers().iter().filter(|t| matches!(t.kind, nagisa::TriggerKind::Command)).count();
     let text = format!(
         "abot 已上线\n账号 {}\n插件 {}，命令 {}\n{now}",
         ready.self_id.0,

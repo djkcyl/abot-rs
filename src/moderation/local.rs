@@ -16,9 +16,8 @@ impl KeywordMatcher {
     /// 从一组词建自动机。`words` 应已是去空白、去空行后的词。
     pub fn new(words: &[String]) -> Self {
         // AhoCorasick::new 仅在模式过多/过大时报错(实务上不会),失败就退回空表。
-        let ac = AhoCorasick::new(words).unwrap_or_else(|_| {
-            AhoCorasick::new::<_, &str>([]).expect("空模式集建自动机不会失败")
-        });
+        let ac = AhoCorasick::new(words)
+            .unwrap_or_else(|_| AhoCorasick::new::<_, &str>([]).expect("空模式集建自动机不会失败"));
         Self { ac }
     }
 

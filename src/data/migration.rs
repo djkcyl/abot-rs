@@ -41,8 +41,7 @@ impl MigratorTrait for Migrator {
         let mut plugins: Vec<Box<dyn MigrationTrait>> =
             nagisa::inventory::iter::<PluginMigration>.into_iter().map(|p| (p.0)()).collect();
         plugins.sort_by(|a, b| a.name().cmp(b.name()));
-        let mut all: Vec<Box<dyn MigrationTrait>> =
-            vec![Box::new(m20260610_000001_create_core::Migration)];
+        let mut all: Vec<Box<dyn MigrationTrait>> = vec![Box::new(m20260610_000001_create_core::Migration)];
         all.extend(plugins);
         all
     }
@@ -112,50 +111,19 @@ mod m20260610_000001_create_core {
                     Table::create()
                         .table(User::Table)
                         .if_not_exists()
-                        .col(
-                            ColumnDef::new(User::Uin)
-                                .big_integer()
-                                .not_null()
-                                .primary_key(),
-                        )
+                        .col(ColumnDef::new(User::Uin).big_integer().not_null().primary_key())
                         // 站内 UID:自增注册序号(BIGSERIAL,唯一)。主键仍是 uin(上游事件
                         // 按 QQ 号寻人),这列供呈现——卡片等处显示比 QQ 号短的站内编号。
-                        .col(
-                            ColumnDef::new(User::Id)
-                                .big_integer()
-                                .not_null()
-                                .auto_increment()
-                                .unique_key(),
-                        )
-                        .col(
-                            ColumnDef::new(User::Coin)
-                                .big_integer()
-                                .not_null()
-                                .default(10),
-                        )
+                        .col(ColumnDef::new(User::Id).big_integer().not_null().auto_increment().unique_key())
+                        .col(ColumnDef::new(User::Coin).big_integer().not_null().default(10))
                         .col(ColumnDef::new(User::Nickname).string().null())
                         .col(ColumnDef::new(User::Exp).big_integer().not_null().default(0))
-                        .col(
-                            ColumnDef::new(User::Banned)
-                                .boolean()
-                                .not_null()
-                                .default(false),
-                        )
+                        .col(ColumnDef::new(User::Banned).boolean().not_null().default(false))
                         // 出图亮暗偏好:auto(按日出日落)/ light / dark,经「主题」命令改。
-                        .col(
-                            ColumnDef::new(User::Theme)
-                                .string()
-                                .not_null()
-                                .default("auto"),
-                        )
+                        .col(ColumnDef::new(User::Theme).string().not_null().default("auto"))
                         // 出图主题色:五套预设之一的键(imaging::THEMES),空串走缺省远黛蓝,
                         // 经「主题」命令改。
-                        .col(
-                            ColumnDef::new(User::ThemeColor)
-                                .string()
-                                .not_null()
-                                .default(""),
-                        )
+                        .col(ColumnDef::new(User::ThemeColor).string().not_null().default(""))
                         .col(
                             ColumnDef::new(User::JoinTime)
                                 .timestamp_with_time_zone()
@@ -172,18 +140,8 @@ mod m20260610_000001_create_core {
                     Table::create()
                         .table(Group::Table)
                         .if_not_exists()
-                        .col(
-                            ColumnDef::new(Group::Gid)
-                                .big_integer()
-                                .not_null()
-                                .primary_key(),
-                        )
-                        .col(
-                            ColumnDef::new(Group::Config)
-                                .json_binary()
-                                .not_null()
-                                .default(Expr::cust("'{}'::jsonb")),
-                        )
+                        .col(ColumnDef::new(Group::Gid).big_integer().not_null().primary_key())
+                        .col(ColumnDef::new(Group::Config).json_binary().not_null().default(Expr::cust("'{}'::jsonb")))
                         .col(
                             ColumnDef::new(Group::CreatedAt)
                                 .timestamp_with_time_zone()
@@ -202,13 +160,7 @@ mod m20260610_000001_create_core {
                     Table::create()
                         .table(CoinLog::Table)
                         .if_not_exists()
-                        .col(
-                            ColumnDef::new(CoinLog::Id)
-                                .big_integer()
-                                .not_null()
-                                .auto_increment()
-                                .primary_key(),
-                        )
+                        .col(ColumnDef::new(CoinLog::Id).big_integer().not_null().auto_increment().primary_key())
                         .col(ColumnDef::new(CoinLog::Uin).big_integer().not_null())
                         .col(ColumnDef::new(CoinLog::Delta).big_integer().not_null())
                         .col(ColumnDef::new(CoinLog::Balance).big_integer().not_null())
@@ -228,15 +180,9 @@ mod m20260610_000001_create_core {
 
         async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
             // 逆序删表（先删依赖侧——这里无 FK，顺序仅为对称）。
-            manager
-                .drop_table(Table::drop().table(CoinLog::Table).if_exists().to_owned())
-                .await?;
-            manager
-                .drop_table(Table::drop().table(Group::Table).if_exists().to_owned())
-                .await?;
-            manager
-                .drop_table(Table::drop().table(User::Table).if_exists().to_owned())
-                .await?;
+            manager.drop_table(Table::drop().table(CoinLog::Table).if_exists().to_owned()).await?;
+            manager.drop_table(Table::drop().table(Group::Table).if_exists().to_owned()).await?;
+            manager.drop_table(Table::drop().table(User::Table).if_exists().to_owned()).await?;
             Ok(())
         }
     }

@@ -94,13 +94,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(PlaceHistory::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(PlaceHistory::Id)
-                            .big_integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
+                    .col(ColumnDef::new(PlaceHistory::Id).big_integer().not_null().auto_increment().primary_key())
                     .col(ColumnDef::new(PlaceHistory::Uin).big_integer().not_null())
                     .col(ColumnDef::new(PlaceHistory::GroupId).big_integer().null())
                     .col(ColumnDef::new(PlaceHistory::X).integer().not_null())
@@ -163,12 +157,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(PlaceSnapshot::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(PlaceSnapshot::HistoryId)
-                            .big_integer()
-                            .not_null()
-                            .primary_key(),
-                    )
+                    .col(ColumnDef::new(PlaceSnapshot::HistoryId).big_integer().not_null().primary_key())
                     .col(ColumnDef::new(PlaceSnapshot::Canvas).binary().not_null())
                     .col(
                         ColumnDef::new(PlaceSnapshot::At)
@@ -203,19 +192,10 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .drop_table(Table::drop().table(PlaceReplayCache::Table).if_exists().to_owned())
-            .await?;
-        manager
-            .drop_table(Table::drop().table(PlaceSnapshot::Table).if_exists().to_owned())
-            .await?;
-        manager
-            .drop_table(Table::drop().table(PlaceHistory::Table).if_exists().to_owned())
-            .await?;
-        manager
-            .drop_table(Table::drop().table(PlacePixel::Table).if_exists().to_owned())
-            .await?;
+        manager.drop_table(Table::drop().table(PlaceReplayCache::Table).if_exists().to_owned()).await?;
+        manager.drop_table(Table::drop().table(PlaceSnapshot::Table).if_exists().to_owned()).await?;
+        manager.drop_table(Table::drop().table(PlaceHistory::Table).if_exists().to_owned()).await?;
+        manager.drop_table(Table::drop().table(PlacePixel::Table).if_exists().to_owned()).await?;
         Ok(())
     }
 }
-

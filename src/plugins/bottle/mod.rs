@@ -16,10 +16,10 @@ mod review;
 use nagisa::prelude::*;
 use serde_json::json;
 
+use crate::COIN_NAME;
 use crate::config::Master;
 use crate::data::AUser;
 use crate::moderation::ContentModerator;
-use crate::COIN_NAME;
 use logic::{DeleteOutcome, DiscussOutcome, NewBottle};
 
 plugin! {
@@ -54,7 +54,13 @@ struct ThrowArgs {
     #[arg(flag, short = 'a', long = "anonymous", desc = "匿名投放，不显示来源和投放者")]
     anonymous: bool,
     /// `-r` / `--remaining`：限定可捞次数（默认 -1 不限，范围 1..=1000）。
-    #[arg(long = "remaining", short = 'r', default = "-1", name = "次数", desc = "限定可被捞次数（1-1000，不填则不限）")]
+    #[arg(
+        long = "remaining",
+        short = 'r',
+        default = "-1",
+        name = "次数",
+        desc = "限定可被捞次数（1-1000，不填则不限）"
+    )]
     remaining: i64,
     /// `-p` / `--pic`：进交互流程，在后续消息里把图片发给 bot（可多张）。
     #[arg(flag, short = 'p', long = "pic", desc = "进交互流程，在后续消息里把图片发给我（可多张）")]
@@ -68,10 +74,13 @@ struct ThrowArgs {
 ///
 /// 先校验内容非空、次数范围、余额；再过审核（文本 + 每张图），命中即转人工待审；
 /// 最后带闸扣费、建瓶。匿名隐去来源；私聊瓶子 `group_id` 为 `None`。
-#[command("丢漂流瓶", "扔漂流瓶",
+#[command(
+    "丢漂流瓶",
+    "扔漂流瓶",
     order = 1,
     description = "把文字或图片装进瓶子丢进大海",
-    usage = "花费 2 币起，含文字加 1、每张图加 3，图片最多 3 张；投放前会把花费报给你、回 y 确认才扣。投放后过内容审核，命中关键词的转人工待审。")]
+    usage = "花费 2 币起，含文字加 1、每张图加 3，图片最多 3 张；投放前会把花费报给你、回 y 确认才扣。投放后过内容审核，命中关键词的转人工待审。"
+)]
 async fn throw(
     reply: Reply,
     mut user: AUser,
@@ -113,9 +122,7 @@ async fn throw(
             let wait = std::time::Duration::from_secs(if pending { 4 } else { 120 });
             let Some(next) = waiter.recv::<MessageEvent>(wait).await else {
                 if pending {
-                    reply
-                        .reply(format!("已收到 {} 张，继续发或发「好了」", images.len()))
-                        .await?;
+                    reply.reply(format!("已收到 {} 张，继续发或发「好了」", images.len())).await?;
                     acked = images.len();
                     continue;
                 }
@@ -149,9 +156,7 @@ async fn throw(
                 }
                 // 静默期的首批即时应一句;连发中的后续批次留给尾随防抖归并。
                 if acked == 0 {
-                    reply
-                        .reply(format!("已收到 {} 张，继续发或发「好了」", images.len()))
-                        .await?;
+                    reply.reply(format!("已收到 {} 张，继续发或发「好了」", images.len())).await?;
                     acked = images.len();
                 }
             } else if !next_text.is_empty() && text.is_empty() {
@@ -180,9 +185,7 @@ async fn throw(
     // 花费：基础 + 含文本 + 每图。先挡明显不够的（不够就无需走确认）。
     let cost = THROW_BASE + if has_text { THROW_PER_TEXT } else { 0 } + THROW_PER_IMAGE * images.len() as i64;
     if user.coin() < cost {
-        reply
-            .reply(format!("投放要 {cost} {COIN_NAME}，你只有 {}，不够", user.coin()))
-            .await?;
+        reply.reply(format!("投放要 {cost} {COIN_NAME}，你只有 {}，不够", user.coin())).await?;
         return Ok(());
     }
 
@@ -283,10 +286,13 @@ async fn throw(
 /// `捞漂流瓶` / `捡漂流瓶` —— 随机捞起一个瓶子，合并转发呈现。
 ///
 /// 无候选不扣费；有候选则带闸扣费、记一次打捞、再渲染。
-#[command("捞漂流瓶", "捡漂流瓶",
+#[command(
+    "捞漂流瓶",
+    "捡漂流瓶",
     order = 2,
     description = "从大海里随机捞起一个瓶子",
-    usage = "发送「捞漂流瓶」随机捞起一个别人丢的瓶子，花费 3 币；大海里没瓶子时不扣费。捞到的瓶子以合并转发呈现，记得它的编号，可以评分或评论。")]
+    usage = "发送「捞漂流瓶」随机捞起一个别人丢的瓶子，花费 3 币；大海里没瓶子时不扣费。捞到的瓶子以合并转发呈现，记得它的编号，可以评分或评论。"
+)]
 async fn fish(reply: Reply, mut user: AUser, bot: Bot) -> HandlerResult {
     let db = user.db().clone();
 
@@ -296,14 +302,13 @@ async fn fish(reply: Reply, mut user: AUser, bot: Bot) -> HandlerResult {
     };
 
     if !user.pay(FISH_COST, "打捞漂流瓶").await? {
-        reply
-            .reply(format!("打捞一次要 {FISH_COST} {COIN_NAME}，你现在只有 {} {COIN_NAME}", user.coin()))
-            .await?;
+        reply.reply(format!("打捞一次要 {FISH_COST} {COIN_NAME}，你现在只有 {} {COIN_NAME}", user.coin())).await?;
         return Ok(());
     }
 
     logic::record_pickup(&db, bottle.id).await.context("记录打捞")?;
-    let forward = render::bottle_forward(&db, &bottle, bot.self_id(), &user.render_theme()).await.context("渲染漂流瓶")?;
+    let forward =
+        render::bottle_forward(&db, &bottle, bot.self_id(), &user.render_theme()).await.context("渲染漂流瓶")?;
     // 先回一句打捞成功(群里 @ 捞的人),合并转发紧随其后——光秃秃一张转发卡不知道发生了什么。
     let hail = format!("成功捞起一只漂流瓶,编号 {}", bottle.id);
     if reply.peer().is_group() {
@@ -320,11 +325,19 @@ async fn fish(reply: Reply, mut user: AUser, bot: Bot) -> HandlerResult {
 ///
 /// 列表只列自己的；详情对本人 / 主人可看完整（含状态），他人仅能看已通过瓶子的公开内容，
 /// 待审 / 驳回的对他人一律「没有这个漂流瓶」（不泄露存在）。
-#[command("查漂流瓶",
+#[command(
+    "查漂流瓶",
     order = 3,
     description = "查看自己丢过的瓶子，或按编号看某只",
-    usage = "别人的瓶子只有通过审核的才看得到。")]
-async fn check(reply: Reply, user: AUser, bot: Bot, State(master): State<Master>, args: Args<CheckArgs>) -> HandlerResult {
+    usage = "别人的瓶子只有通过审核的才看得到。"
+)]
+async fn check(
+    reply: Reply,
+    user: AUser,
+    bot: Bot,
+    State(master): State<Master>,
+    args: Args<CheckArgs>,
+) -> HandlerResult {
     let db = user.db().clone();
     let me = user.uin();
 
@@ -387,10 +400,12 @@ struct CheckArgs {
 }
 
 /// `删漂流瓶` —— 软删自己的瓶子并退款；主人可删任意瓶子。
-#[command("删漂流瓶",
+#[command(
+    "删漂流瓶",
     order = 4,
     description = "回收自己丢的瓶子并退还 1 币",
-    usage = "只能删自己的瓶子，主人可删任意；回收退还 1 币。")]
+    usage = "只能删自己的瓶子，主人可删任意；回收退还 1 币。"
+)]
 async fn remove(reply: Reply, mut user: AUser, State(master): State<Master>, args: Args<RemoveArgs>) -> HandlerResult {
     let db = user.db().clone();
     let me = user.uin();
@@ -421,10 +436,12 @@ struct RemoveArgs {
 }
 
 /// `漂流瓶评分` —— 给瓶子打 1-5 分，可改分（upsert）。
-#[command("漂流瓶评分",
+#[command(
+    "漂流瓶评分",
     order = 5,
     description = "给捞到的瓶子打 1-5 分",
-    usage = "同一个瓶子可重复打分，新分覆盖旧分。")]
+    usage = "同一个瓶子可重复打分，新分覆盖旧分。"
+)]
 async fn rate(reply: Reply, user: AUser, args: Args<RateArgs>) -> HandlerResult {
     let db = user.db().clone();
     let RateArgs { id, score } = args.0;
@@ -457,10 +474,7 @@ struct RateArgs {
 }
 
 /// `漂流瓶评论` —— 给瓶子写评论（3-500 字，每人每瓶至多 3 条）。
-#[command("漂流瓶评论",
-    order = 6,
-    description = "给捞到的瓶子写一条评论",
-    usage = "同一个瓶子每人最多评 3 条。")]
+#[command("漂流瓶评论", order = 6, description = "给捞到的瓶子写一条评论", usage = "同一个瓶子每人最多评 3 条。")]
 async fn comment(reply: Reply, user: AUser, m: MessageEvent, args: Args<CommentArgs>) -> HandlerResult {
     let db = user.db().clone();
     let CommentArgs { id, text } = args.0;
@@ -504,10 +518,13 @@ struct CommentArgs {
 ///
 /// 两个入口：对着捞瓶/查瓶发出的合并转发**回复**本命令（按回复目标经 `bottle_sent` 映射反查
 /// 瓶子），或直接带编号。可见性同查瓶详情：本人/主人任意状态，他人仅已通过且未删的。
-#[command("漂流瓶原文", "取原文",
+#[command(
+    "漂流瓶原文",
+    "取原文",
     order = 7,
     description = "取出瓶子里的原始文字和图片",
-    usage = "对着捞到的瓶子（合并转发）回复「取原文」，或发送「漂流瓶原文 编号」。文字以可复制的原文发出，图片原样重发。")]
+    usage = "对着捞到的瓶子（合并转发）回复「取原文」，或发送「漂流瓶原文 编号」。文字以可复制的原文发出，图片原样重发。"
+)]
 async fn original(
     reply: Reply,
     user: AUser,

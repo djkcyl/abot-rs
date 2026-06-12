@@ -15,11 +15,7 @@ struct ChatProfile;
 #[async_trait]
 impl ProfileProvider for ChatProfile {
     async fn line(&self, db: &DatabaseConnection, uin: i64) -> Option<String> {
-        let n = chat_log::Entity::find()
-            .filter(chat_log::Column::Uin.eq(uin))
-            .count(db)
-            .await
-            .ok()?;
+        let n = chat_log::Entity::find().filter(chat_log::Column::Uin.eq(uin)).count(db).await.ok()?;
         // 没记录过 → 不占行。
         if n == 0 {
             return None;

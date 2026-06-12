@@ -50,17 +50,11 @@ impl Config {
     /// 缺失项回落到本机默认；`SUPERUSERS` 解析失败的条目被静默跳过（不让一个脏号
     /// 拖垮整个启动）。`master`（非 0）始终并入 `superusers`——主人当然是超管。
     pub fn from_env() -> Self {
-        let database_url =
-            std::env::var("DATABASE_URL").unwrap_or_else(|_| DEFAULT_DATABASE_URL.to_string());
-        let onebot_ws =
-            std::env::var("ONEBOT_WS_URL").unwrap_or_else(|_| DEFAULT_ONEBOT_WS_URL.to_string());
-        let master = Uin(std::env::var("MASTER")
-            .ok()
-            .and_then(|s| s.trim().parse::<i64>().ok())
-            .unwrap_or(DEFAULT_MASTER));
-        let mut superusers = std::env::var("SUPERUSERS")
-            .map(|s| parse_superusers(&s))
-            .unwrap_or_default();
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| DEFAULT_DATABASE_URL.to_string());
+        let onebot_ws = std::env::var("ONEBOT_WS_URL").unwrap_or_else(|_| DEFAULT_ONEBOT_WS_URL.to_string());
+        let master =
+            Uin(std::env::var("MASTER").ok().and_then(|s| s.trim().parse::<i64>().ok()).unwrap_or(DEFAULT_MASTER));
+        let mut superusers = std::env::var("SUPERUSERS").map(|s| parse_superusers(&s)).unwrap_or_default();
         // 主人恒为超管：非 0 且尚未在清单里则并入。
         if master.0 != 0 && !superusers.contains(&master) {
             superusers.push(master);
@@ -75,10 +69,5 @@ impl Config {
 
 /// 解析逗号分隔的超管清单。空白条目跳过；非整数条目跳过（脏号不应阻断启动）。
 fn parse_superusers(raw: &str) -> Vec<Uin> {
-    raw.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| s.parse::<i64>().ok())
-        .map(Uin)
-        .collect()
+    raw.split(',').map(str::trim).filter(|s| !s.is_empty()).filter_map(|s| s.parse::<i64>().ok()).map(Uin).collect()
 }

@@ -24,11 +24,7 @@ pub fn exp_to_reach(level: i64) -> i64 {
     }
     let v = LEVEL_BASE as f64 * (LEVEL_RATIO.powi(level as i32) - 1.0) / (LEVEL_RATIO - 1.0);
     // 极高等级时几何和会超出 i64，饱和到上限以免溢出（实际等级远达不到这里）。
-    if v >= i64::MAX as f64 {
-        i64::MAX
-    } else {
-        v.round() as i64
-    }
+    if v >= i64::MAX as f64 { i64::MAX } else { v.round() as i64 }
 }
 
 /// 给定经验值，求其当前等级 = 满足 `exp_to_reach(L) <= exp` 的最大 `L`（下取整，最低 0）。
@@ -41,9 +37,7 @@ pub fn level_of(exp: i64) -> i64 {
     }
     // 解 LEVEL_BASE*(r^L - 1)/(r-1) <= exp，即 r^L <= 1 + exp*(r-1)/LEVEL_BASE。
     // 取 L = log_r(1 + exp*(r-1)/LEVEL_BASE) 下整为起点，再对照 exp_to_reach 校正。
-    let approx = ((1.0 + exp as f64 * (LEVEL_RATIO - 1.0) / LEVEL_BASE as f64).ln()
-        / LEVEL_RATIO.ln())
-    .floor();
+    let approx = ((1.0 + exp as f64 * (LEVEL_RATIO - 1.0) / LEVEL_BASE as f64).ln() / LEVEL_RATIO.ln()).floor();
     let mut level = approx.max(0.0) as i64;
 
     // 向上修正：下一级阈值仍 <= exp 则更高（带上限护栏，防病态输入空转）。

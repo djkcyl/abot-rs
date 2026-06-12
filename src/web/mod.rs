@@ -13,26 +13,26 @@
 
 pub mod auth;
 pub mod config;
-pub mod protocol;
-pub mod registry;
-pub mod hub;
 pub mod embed;
-pub mod migration;
 pub mod entity;
-pub mod providers;
+pub mod hub;
 pub mod media;
+pub mod migration;
+pub mod protocol;
+pub mod providers;
+pub mod registry;
 pub mod review;
 pub mod switches;
 
 use crate::web::embed::static_handler;
-use crate::web::hub::{ws_handler, Hub};
+use crate::web::hub::{Hub, ws_handler};
 use crate::web::registry::{ConsoleContext, ConsolePluginCtor, ConsoleRegistry};
+use axum::Router;
 use axum::extract::{Path, Query};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::routing::get;
-use axum::Router;
 use nagisa::log::LogBus;
 use nagisa::prelude::*; // Service, ServiceBus, ShutdownToken, Error, Result, async_trait
 use sea_orm::DatabaseConnection;
@@ -69,12 +69,7 @@ pub struct ConsoleService {
 impl ConsoleService {
     /// 建一个监听 `bind` 的控制台服务。
     pub fn new(bind: SocketAddr) -> Arc<Self> {
-        Arc::new(Self {
-            bind,
-            listener: Mutex::new(None),
-            hub: Mutex::new(None),
-            log: Mutex::new(None),
-        })
+        Arc::new(Self { bind, listener: Mutex::new(None), hub: Mutex::new(None), log: Mutex::new(None) })
     }
 }
 
@@ -86,11 +81,9 @@ impl Service for ConsoleService {
 
     async fn prepare(&self, bus: &ServiceBus) -> nagisa::Result<()> {
         // 取 main 经 App::service_data 预置的共享数据库连接。
-        let db = bus.get::<DatabaseConnection>().ok_or_else(|| {
-            nagisa::Error::action(
-                "web-console: ServiceBus 缺少 DatabaseConnection",
-            )
-        })?;
+        let db = bus
+            .get::<DatabaseConnection>()
+            .ok_or_else(|| nagisa::Error::action("web-console: ServiceBus 缺少 DatabaseConnection"))?;
         let bot = bus
             .get::<nagisa::Bot>()
             .map(|b| (*b).clone())
@@ -147,12 +140,7 @@ impl Service for ConsoleService {
             .await
             .take()
             .ok_or_else(|| nagisa::Error::action("web-console: prepare 未建 listener"))?;
-        let hub = self
-            .hub
-            .lock()
-            .await
-            .take()
-            .ok_or_else(|| nagisa::Error::action("web-console: prepare 未建 hub"))?;
+        let hub = self.hub.lock().await.take().ok_or_else(|| nagisa::Error::action("web-console: prepare 未建 hub"))?;
 
         // 日志泵:有总线才开。随 shutdown 一并收束(token 可 clone,各自取一份)。
         if let Some((Some(log_bus), log_buf)) = self.log.lock().await.take() {
@@ -191,10 +179,7 @@ struct MediaQuery {
     sig: Option<String>,
 }
 
-async fn serve_media(
-    Path(name): Path<String>,
-    Query(q): Query<MediaQuery>,
-) -> impl IntoResponse {
+async fn serve_media(Path(name): Path<String>, Query(q): Query<MediaQuery>) -> impl IntoResponse {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -266,11 +251,7 @@ async fn log_pump(bus: LogBus, buf: LogBuf, hub: Arc<Hub>, shutdown: ShutdownTok
 
 /// 把一条 [`LogRecord`](nagisa::log::LogRecord) 渲染成前端要的紧凑 JSON 行。
 fn render_record(record: &nagisa::log::LogRecord) -> serde_json::Value {
-    let ts = record
-        .timestamp
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let ts = record.timestamp.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     serde_json::json!({
         "ts": ts,
         "level": record.level.as_str(),

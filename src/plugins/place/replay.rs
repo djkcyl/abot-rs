@@ -7,9 +7,9 @@
 //! 字节,零量化;除首帧外每帧只编码本批落格的脏包围盒(GIF 子区域帧 + 保留上一帧),
 //! 跳帧小时一帧只有几十字节,几百帧的 GIF 也只在百 KB 量级。逐帧流式编码,不全帧驻留。
 
-use nagisa::prelude::*;
 use chrono::{Duration as ChronoDuration, Local};
 use gif::{DisposalMethod, Encoder, Frame, Repeat};
+use nagisa::prelude::*;
 use sea_orm::DatabaseConnection;
 
 use super::colors;
@@ -107,8 +107,8 @@ fn encode_replay(base: &[u8], rows: &[(i32, i32, u8)]) -> Result<Vec<u8>> {
     let mut buf = base.to_vec();
     debug_assert_eq!(buf.len(), (W * H) as usize);
     let mut out = Vec::new();
-    let mut enc = Encoder::new(&mut out, (W * CELL) as u16, (H * CELL) as u16, &palette)
-        .context("建 GIF 编码器失败")?;
+    let mut enc =
+        Encoder::new(&mut out, (W * CELL) as u16, (H * CELL) as u16, &palette).context("建 GIF 编码器失败")?;
     enc.set_repeat(Repeat::Infinite).context("设置 GIF 循环失败")?;
 
     // 首帧:起点画布全帧。

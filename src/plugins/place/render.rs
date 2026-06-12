@@ -5,10 +5,10 @@
 //!
 //! 文字(刻度/编号)一律用 [`font`] 的点阵数字,**零字体依赖**。颜色经 [`colors`] 索引→RGB。
 
-use nagisa::prelude::*;
 use chrono::Local;
 use image::codecs::webp::WebPEncoder;
 use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage};
+use nagisa::prelude::*;
 use sea_orm::{DatabaseConnection, EntityTrait};
 
 use super::colors::{self, EMPTY};

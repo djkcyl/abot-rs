@@ -6,8 +6,8 @@
 //! ([`LoginGate::poll`])拿到已批准 uin → 签发 token 存 `web_token`。WS 握手带 `?token=`,
 //! [`crate::web::hub::Hub`] 查 token 得 [`AuthUser`]。
 
-use nagisa::prelude::*;
 use nagisa::Rendezvous;
+use nagisa::prelude::*;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -118,9 +118,11 @@ pub async fn lookup_token(db: &DatabaseConnection, token: &str) -> Option<AuthUs
 }
 
 /// `登录 <验证码>`(仅私聊)—— 把网页验证码批准为发送者的 QQ 身份。
-#[command("登录",
+#[command(
+    "登录",
     description = "绑定网页控制台登录",
-    usage = "在网页控制台点登录拿到验证码后,私聊机器人发送「登录 验证码」即可批准这次网页登录。验证码有过期时间,过期就回网页重新取。")]
+    usage = "在网页控制台点登录拿到验证码后,私聊机器人发送「登录 验证码」即可批准这次网页登录。验证码有过期时间,过期就回网页重新取。"
+)]
 async fn login(
     _pm: PrivateMessage,
     reply: Reply,
@@ -141,9 +143,9 @@ async fn login(
     Ok(())
 }
 
-use axum::extract::State as AxumState;
 use axum::Json;
-use serde_json::{json, Value};
+use axum::extract::State as AxumState;
+use serde_json::{Value, json};
 
 use crate::web::hub::Hub;
 
@@ -160,10 +162,7 @@ pub async fn login_challenge(AxumState(hub): AxumState<Arc<Hub>>) -> Json<Value>
 
 /// `POST /api/login/poll` body `{"code":"..."}` → 已批准则签发 token 返回 `{token, authority}`,
 /// 否则 `{token: null}`(网页继续轮询直到超时)。
-pub async fn login_poll(
-    AxumState(hub): AxumState<Arc<Hub>>,
-    Json(body): Json<Value>,
-) -> Json<Value> {
+pub async fn login_poll(AxumState(hub): AxumState<Arc<Hub>>, Json(body): Json<Value>) -> Json<Value> {
     let code = body.get("code").and_then(|v| v.as_str()).unwrap_or("");
     match hub.login_gate().poll(code) {
         Some(uin) => {

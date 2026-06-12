@@ -84,11 +84,7 @@ async fn help(
 ///
 /// 解析触发器时框架已把 `plugin_key` 填成有效 key,这里给插件侧算同样的口径,二者才能对上。
 fn effective_key(p: &PluginMeta) -> &str {
-    if p.key.is_empty() {
-        p.module_path.rsplit("::").next().unwrap_or(p.module_path)
-    } else {
-        p.key
-    }
+    if p.key.is_empty() { p.module_path.rsplit("::").next().unwrap_or(p.module_path) } else { p.key }
 }
 
 /// 插件在总览/详情头部用的简介:有 `plugin.description` 就用它;没有(单命令插件不写插件级描述)则
@@ -98,9 +94,7 @@ fn plugin_desc<'a>(p: &'a PluginMeta, triggers: &'a [TriggerMeta]) -> &'a str {
         return p.description;
     }
     let key = effective_key(p);
-    let mut it = triggers
-        .iter()
-        .filter(|t| matches!(t.kind, TriggerKind::Command) && !t.hidden && t.plugin_key == key);
+    let mut it = triggers.iter().filter(|t| matches!(t.kind, TriggerKind::Command) && !t.hidden && t.plugin_key == key);
     match (it.next(), it.next()) {
         (Some(only), None) => only.description, // 恰好一条命令 → 用它的描述
         _ => "",
@@ -117,8 +111,7 @@ pub(crate) fn render_overview(
 ) -> String {
     let mut sections = Vec::new();
     for (cat, label) in CATEGORY_ORDER {
-        let mut ps: Vec<&PluginMeta> =
-            plugins.iter().filter(|p| !p.hidden && p.category == *cat).collect();
+        let mut ps: Vec<&PluginMeta> = plugins.iter().filter(|p| !p.hidden && p.category == *cat).collect();
         if ps.is_empty() {
             continue;
         }
@@ -136,11 +129,7 @@ pub(crate) fn render_overview(
         sections.push(lines.join("\n"));
     }
 
-    let mut body = if sections.is_empty() {
-        "暂无可用命令".to_string()
-    } else {
-        sections.join("\n\n")
-    };
+    let mut body = if sections.is_empty() { "暂无可用命令".to_string() } else { sections.join("\n\n") };
     body.push_str("\n\n发送「help 功能名」看某个功能的详细命令，例如「help 漂流瓶」。");
     body
 }
@@ -149,11 +138,7 @@ pub(crate) fn render_overview(
 ///
 /// 命中优先级:先按命令命中(非隐藏的命令触发器,命令词 / 命令名 / 命令 id 任一对上)→ 展开它
 /// 所属的整个插件;再按插件名 / 插件有效 key 命中。`target` 应已去空白。
-fn resolve_plugin<'a>(
-    target: &str,
-    plugins: &'a [PluginMeta],
-    triggers: &[TriggerMeta],
-) -> Option<&'a PluginMeta> {
+fn resolve_plugin<'a>(target: &str, plugins: &'a [PluginMeta], triggers: &[TriggerMeta]) -> Option<&'a PluginMeta> {
     // (a) 命令命中:其所属插件(经 `plugin_key` 对上有效 key)。
     let cmd_hit = triggers.iter().find(|t| {
         matches!(t.kind, TriggerKind::Command)
@@ -234,11 +219,7 @@ fn plugin_off(p: &PluginMeta, enabled: &EnabledSet, peer: Option<Peer>) -> bool 
 
 /// 名字按需缀「（已停用）」。
 fn name_with_off(name: &str, off: bool) -> String {
-    if off {
-        format!("{name}（已停用）")
-    } else {
-        name.to_string()
-    }
+    if off { format!("{name}（已停用）") } else { name.to_string() }
 }
 
 /// 渲染一条命令(CLI 式):`▸ 主词（别名：…）`、简介、**自动生成的**用法 synopsis、逐参数说明,
@@ -343,15 +324,5 @@ fn param_head(a: &ArgSpec) -> String {
 /// 单条参数说明：`前缀：说明`（无说明则只给前缀）。
 fn param_line(a: &ArgSpec) -> String {
     let head = param_head(a);
-    if a.desc.is_empty() {
-        head
-    } else {
-        format!("{head}：{}", a.desc)
-    }
+    if a.desc.is_empty() { head } else { format!("{head}：{}", a.desc) }
 }
-
-
-
-
-
-

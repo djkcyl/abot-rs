@@ -2,15 +2,14 @@
 //! 详情/功能;[`ReviewProvider`] 聚合各审核来源的待审 + 按来源派发 `detail`/`invoke`。待审真值在各
 //! 消费者自己的库里(重启自动重建,无中心队列表、不存闭包)。
 
-use nagisa::async_trait;
 use nagisa::Bot;
+use nagisa::async_trait;
 use sea_orm::DatabaseConnection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::web::registry::{
-    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService,
-    WebListener,
+    AuthUser, ConsoleContext, ConsolePlugin, ConsolePluginCtor, ConsoleRegistry, WebDataService, WebListener,
 };
 
 /// 列表列定义。
@@ -46,13 +45,7 @@ pub trait ReviewSource: Send + Sync {
     fn actions(&self) -> Vec<Action>;
     async fn pending(&self, ctx: &ReviewContext) -> Vec<Entry>;
     async fn detail(&self, id: &str, ctx: &ReviewContext) -> Value;
-    async fn handle(
-        &self,
-        action: &str,
-        id: &str,
-        who: AuthUser,
-        ctx: &ReviewContext,
-    ) -> Result<(), String>;
+    async fn handle(&self, action: &str, id: &str, who: AuthUser, ctx: &ReviewContext) -> Result<(), String>;
 }
 
 /// `inventory` 自注册槽。
@@ -71,10 +64,7 @@ impl ReviewProvider {
         for c in nagisa::inventory::iter::<ReviewSourceCtor> {
             sources.push((c.0)(cx));
         }
-        Arc::new(Self {
-            sources,
-            ctx: ReviewContext { db: cx.db.clone(), bot: cx.bot.clone() },
-        })
+        Arc::new(Self { sources, ctx: ReviewContext { db: cx.db.clone(), bot: cx.bot.clone() } })
     }
     fn find(&self, source: &str) -> Option<&Arc<dyn ReviewSource>> {
         self.sources.iter().find(|s| s.source() == source)

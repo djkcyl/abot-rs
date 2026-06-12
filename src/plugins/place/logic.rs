@@ -7,22 +7,22 @@
 //! 触碰共享经济仍走核心的 [`add_coin_on`](crate::data::user::add_coin_on)(原子自加 + 写 `coin_log`);
 //! 经验在同一事务里对 `user.exp` col_expr 自加。整笔要么全成、要么全回滚。
 
-use nagisa::prelude::*;
 use chrono::Local;
+use nagisa::prelude::*;
+use sea_orm::ActiveValue::{NotSet, Set};
 use sea_orm::prelude::DateTimeWithTimeZone;
 use sea_orm::sea_query::{Expr, OnConflict};
-use sea_orm::ActiveValue::{NotSet, Set};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, TransactionTrait,
 };
 
 use super::colors::EMPTY;
 use super::entity::{history, pixel, replay_cache, snapshot};
 use super::render;
+use crate::data::AUser;
 use crate::data::entity::user;
 use crate::data::user::try_debit_on;
-use crate::data::AUser;
 
 /// 落账原因(写入 `coin_log.reason`)。
 const PLACE_REASON: &str = "画板";
@@ -41,11 +41,7 @@ pub fn price(placed: i64, level: i64) -> i64 {
 
 /// 该人累计落格数(`COUNT place_history WHERE uin`)—— 兼作币价的 `n` 与战绩。
 pub async fn placed_count(db: &DatabaseConnection, uin: i64) -> Result<i64> {
-    let n = history::Entity::find()
-        .filter(history::Column::Uin.eq(uin))
-        .count(db)
-        .await
-        .context("查累计落格数失败")?;
+    let n = history::Entity::find().filter(history::Column::Uin.eq(uin)).count(db).await.context("查累计落格数失败")?;
     Ok(n as i64)
 }
 
@@ -62,11 +58,7 @@ pub const SNAPSHOT_EVERY: i64 = 5_000;
 /// 按 `id` 游标分批拉、`select_only` 三列直接成元组——历史表是追加审计,行数无上界,
 /// 一次 `.all()` 物化完整 Model 在千万行量级是 GB 级内存;分批 + 元组后内存只随结果集
 /// (每行 9 字节)走。`id` 自增,次序即落格次序。
-async fn fetch_strokes(
-    db: &DatabaseConnection,
-    after: i64,
-    before: Option<i64>,
-) -> Result<Vec<(i32, i32, u8)>> {
+async fn fetch_strokes(db: &DatabaseConnection, after: i64, before: Option<i64>) -> Result<Vec<(i32, i32, u8)>> {
     let mut out = Vec::new();
     let mut cursor = after;
     loop {
@@ -82,8 +74,7 @@ async fn fetch_strokes(
         if let Some(b) = before {
             q = q.filter(history::Column::Id.lt(b));
         }
-        let rows: Vec<(i64, i32, i32, i32)> =
-            q.into_tuple().all(db).await.context("查回放历史失败")?;
+        let rows: Vec<(i64, i32, i32, i32)> = q.into_tuple().all(db).await.context("查回放历史失败")?;
         let Some(&(last_id, ..)) = rows.last() else { break };
         cursor = last_id;
         out.extend(rows.iter().map(|&(_, x, y, c)| (x, y, c.clamp(1, 32) as u8)));
@@ -112,10 +103,7 @@ pub struct ReplayWindow {
 }
 
 /// 窗口起点:第一笔 `at >= since` 的 history id;`None` = 窗内没有落格。
-pub async fn window_start_id(
-    db: &DatabaseConnection,
-    since: DateTimeWithTimeZone,
-) -> Result<Option<i64>> {
+pub async fn window_start_id(db: &DatabaseConnection, since: DateTimeWithTimeZone) -> Result<Option<i64>> {
     history::Entity::find()
         .select_only()
         .column(history::Column::Id)
@@ -130,11 +118,7 @@ pub async fn window_start_id(
 
 /// 窗内笔数(id ≥ start 的行数,PK 范围 COUNT)——回放计费的「重量」。
 pub async fn strokes_from(db: &DatabaseConnection, start: i64) -> Result<i64> {
-    let n = history::Entity::find()
-        .filter(history::Column::Id.gte(start))
-        .count(db)
-        .await
-        .context("查窗内笔数失败")?;
+    let n = history::Entity::find().filter(history::Column::Id.gte(start)).count(db).await.context("查窗内笔数失败")?;
     Ok(n as i64)
 }
 
@@ -146,10 +130,7 @@ pub fn replay_cost(strokes: i64) -> i64 {
 /// 取回放窗口数据。`since=None` 全量(空白起步、全部笔);带窗则从最近的画布快照
 /// 恢复出**窗口起点时刻的真实画布**做首帧(最多补演 [`SNAPSHOT_EVERY`] 笔零头),
 /// 窗内笔照常取——回放语义是「画布当时的样子怎么演变到现在」,不是空白上只画窗内笔。
-pub async fn replay_window(
-    db: &DatabaseConnection,
-    since: Option<DateTimeWithTimeZone>,
-) -> Result<ReplayWindow> {
+pub async fn replay_window(db: &DatabaseConnection, since: Option<DateTimeWithTimeZone>) -> Result<ReplayWindow> {
     let blank = vec![EMPTY; (render::W * render::H) as usize];
     let Some(s) = since else {
         return Ok(ReplayWindow { base: blank, rows: fetch_strokes(db, 0, None).await? });
@@ -211,12 +192,7 @@ pub async fn replay_cache_put(db: &DatabaseConnection, gif: Vec<u8>) -> Result<(
 }
 
 /// 某格最近若干次落格(按 `at` 降序,最多 `limit` 条)。供 superuser 查「这格谁画的」。
-pub async fn cell_history(
-    db: &DatabaseConnection,
-    x: i32,
-    y: i32,
-    limit: u64,
-) -> Result<Vec<history::Model>> {
+pub async fn cell_history(db: &DatabaseConnection, x: i32, y: i32, limit: u64) -> Result<Vec<history::Model>> {
     history::Entity::find()
         .filter(history::Column::X.eq(x))
         .filter(history::Column::Y.eq(y))
@@ -229,20 +205,11 @@ pub async fn cell_history(
 
 /// 全局最近若干次落格(按 `at` 降序,最多 `limit` 条)。供 `画板历史`(无坐标)用。
 pub async fn recent_history(db: &DatabaseConnection, limit: u64) -> Result<Vec<history::Model>> {
-    history::Entity::find()
-        .order_by_desc(history::Column::At)
-        .limit(limit)
-        .all(db)
-        .await
-        .context("查最近历史失败")
+    history::Entity::find().order_by_desc(history::Column::At).limit(limit).all(db).await.context("查最近历史失败")
 }
 
 /// 某人最近若干次落格(按 `at` 降序,最多 `limit` 条)。供 `画板历史 @某人` 用。
-pub async fn person_history(
-    db: &DatabaseConnection,
-    uin: i64,
-    limit: u64,
-) -> Result<Vec<history::Model>> {
+pub async fn person_history(db: &DatabaseConnection, uin: i64, limit: u64) -> Result<Vec<history::Model>> {
     history::Entity::find()
         .filter(history::Column::Uin.eq(uin))
         .order_by_desc(history::Column::At)
@@ -275,11 +242,7 @@ async fn last_place(db: &DatabaseConnection, uin: i64) -> Result<Option<DateTime
 }
 
 /// 冷却剩余:返回 `Some((剩余分钟, 间隔分钟))` 表示仍在冷却中;`None` 表示可落格。
-pub async fn cooldown_remaining(
-    db: &DatabaseConnection,
-    uin: i64,
-    level: i64,
-) -> Result<Option<(i64, i64)>> {
+pub async fn cooldown_remaining(db: &DatabaseConnection, uin: i64, level: i64) -> Result<Option<(i64, i64)>> {
     let interval = cooldown_secs(level);
     let Some(last) = last_place(db, uin).await? else {
         return Ok(None); // 从未落格
@@ -394,14 +357,10 @@ pub async fn try_place(
     // 提交的——影响仅回放底图差一格,且重演按 id 序幂等覆盖,可忽略。
     if hist.id % SNAPSHOT_EVERY == 0 {
         let canvas = render::load_canvas(&txn).await?;
-        snapshot::ActiveModel {
-            history_id: Set(hist.id),
-            canvas: Set(canvas),
-            at: Set(now),
-        }
-        .insert(&txn)
-        .await
-        .context("写画布快照失败")?;
+        snapshot::ActiveModel { history_id: Set(hist.id), canvas: Set(canvas), at: Set(now) }
+            .insert(&txn)
+            .await
+            .context("写画布快照失败")?;
     }
 
     // 扣币已在事务最前完成(带闸),这里只加经验。

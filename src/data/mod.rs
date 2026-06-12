@@ -29,8 +29,8 @@ pub mod profile;
 
 // 常用句柄直接在 `crate::data::` 下可达（`use crate::data::{AUser, AGroup, Db, ..}`）。
 pub use group::AGroup;
-pub use level::{level_info, level_of, LevelChange, LevelInfo};
-pub use profile::{collect_grouped, GroupedProfile, ProfileGroup, ProfileProvider, ProfileSection};
+pub use level::{LevelChange, LevelInfo, level_info, level_of};
+pub use profile::{GroupedProfile, ProfileGroup, ProfileProvider, ProfileSection, collect_grouped};
 pub use user::AUser;
 
 use nagisa::prelude::*;

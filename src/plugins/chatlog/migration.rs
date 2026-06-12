@@ -47,23 +47,12 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ChatLog::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(ChatLog::Id)
-                            .big_integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
+                    .col(ColumnDef::new(ChatLog::Id).big_integer().not_null().auto_increment().primary_key())
                     .col(ColumnDef::new(ChatLog::Uin).big_integer().not_null())
                     .col(ColumnDef::new(ChatLog::GroupId).big_integer().null())
                     .col(ColumnDef::new(ChatLog::OnebotId).big_integer().null())
                     .col(ColumnDef::new(ChatLog::Seq).big_integer().not_null().default(0))
-                    .col(
-                        ColumnDef::new(ChatLog::Content)
-                            .json_binary()
-                            .not_null()
-                            .default(Expr::cust("'{}'::jsonb")),
-                    )
+                    .col(ColumnDef::new(ChatLog::Content).json_binary().not_null().default(Expr::cust("'{}'::jsonb")))
                     .col(ColumnDef::new(ChatLog::FromSelf).boolean().not_null().default(false))
                     .col(ColumnDef::new(ChatLog::PrivatePeer).big_integer().null())
                     .col(

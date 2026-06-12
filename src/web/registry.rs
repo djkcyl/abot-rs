@@ -5,8 +5,8 @@
 //! 数据源与监听器,并持有共享 `Arc` 状态。`inventory` 项是静态的,故注册的是**构造器**
 //! [`ConsolePluginCtor`],`ConsoleService::prepare` 时给 [`ConsoleContext`] 实例化。
 
-use nagisa::async_trait;
 use nagisa::Bot;
+use nagisa::async_trait;
 use sea_orm::DatabaseConnection;
 use serde_json::Value;
 use std::sync::Arc;
