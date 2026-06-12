@@ -20,9 +20,10 @@ pub mod render;
 use chrono::{Local, Timelike};
 use nagisa::prelude::*;
 
-use crate::data::AUser;
-use crate::plugins::sign::logic::{do_sign, SignOutcome, FIRST_GIFT, JACKPOT_GOLD};
 use crate::COIN_NAME; // 全局货币名,单一来源(crate 根)
+use crate::data::AUser;
+use crate::plugins::display_name;
+use crate::plugins::sign::logic::{FIRST_GIFT, JACKPOT_GOLD, SignOutcome, do_sign};
 
 // 登记本模块即一个插件:`签到` 命令据此(最长模块前缀)归属 key="sign"。缺省字段
 // (can_disable=true / default_enable=true)即娱乐类插件常态:可被群管开关、默认开启。
@@ -51,9 +52,12 @@ fn greeting() -> &'static str {
 /// （[`render::card_image`]，渲染失败退文字）；同日重复返回 [`SignOutcome::Already`]，
 /// 一句文字打发。`do_sign` 返回 `nagisa::Result`，出错直接 `?` 上抛（dispatch 记日志、
 /// 止于此）。
-#[command("签到", "sign",
+#[command(
+    "签到",
+    "sign",
     description = "每日签到领奖励",
-    usage = "发送「签到」每天签一次，凌晨 4 点刷新；连续签到天数越多奖励越高，签到发金币和经验，连签满 7／30／100 天另有里程碑奖励。")]
+    usage = "发送「签到」每天签一次，凌晨 4 点刷新；连续签到天数越多奖励越高，签到发金币和经验，连签满 7／30／100 天另有里程碑奖励。"
+)]
 async fn sign(reply: Reply, mut user: AUser, m: MessageEvent) -> HandlerResult {
     // user 已持同一份连接（内部 Arc，克隆廉价）；克隆出来避免与 &mut user 借用冲突。
     let db = user.db().clone();
@@ -111,15 +115,16 @@ async fn sign(reply: Reply, mut user: AUser, m: MessageEvent) -> HandlerResult {
 ///
 /// 查 [`logic::calendar_data`](当月 `sign_log` + 汇总行)→ [`render::calendar_image`]
 /// 渲月历图引用回复;渲染失败退一行文字(签过的日子序列)。没签过也出图(空日历)。
-#[command("签到日历",
+#[command(
+    "签到日历",
     description = "看本月签到日历",
-    usage = "发送「签到日历」，看本月哪些天签了到。凌晨 4 点前签的算前一天。")]
+    usage = "发送「签到日历」，看本月哪些天签了到。凌晨 4 点前签的算前一天。"
+)]
 async fn calendar(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
     use chrono::Datelike;
 
     let today = crate::data::util::business_day();
-    let data =
-        logic::calendar_data(user.db(), user.uin(), today.year(), today.month(), today).await?;
+    let data = logic::calendar_data(user.db(), user.uin(), today.year(), today.month(), today).await?;
     let month_days: Vec<u32> = data.days.iter().map(|d| d.day()).collect();
 
     let card = render::CalendarCard {
@@ -144,8 +149,7 @@ async fn calendar(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
             let listed = if month_days.is_empty() {
                 "这个月还没签过到".to_string()
             } else {
-                let days =
-                    month_days.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("、");
+                let days = month_days.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("、");
                 format!("签了 {} 天:{} 号", month_days.len(), days)
             };
             reply
@@ -160,18 +164,6 @@ async fn calendar(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
         }
     }
     Ok(())
-}
-
-/// 发送者显示名：群名片/昵称，私聊好友备注/昵称；都取不到用 QQ 号串。
-fn display_name(m: &MessageEvent, uin: i64) -> String {
-    m.member
-        .as_ref()
-        .map(|mi| mi.display_name())
-        .or_else(|| m.friend.as_ref().map(|f| f.display_name()))
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| uin.to_string())
 }
 
 /// 卡片的文字退路(渲染失败时用,信息同卡片)。
@@ -191,13 +183,7 @@ fn text_summary(c: &render::SignCard) -> String {
     if let Some(to) = c.leveled_to {
         line3.push_str(&format!("，升到 Lv.{to}"));
     }
-    line3.push_str(&format!(
-        "，当前 Lv.{}（{}/{}）",
-        c.level.level, c.level.into_level, c.level.level_span
-    ));
+    line3.push_str(&format!("，当前 Lv.{}（{}/{}）", c.level.level, c.level.into_level, c.level.level_span));
 
-    format!(
-        "{}，签到成功\n{line2}\n{line3}\n连签 {} 天，余额 {} {COIN_NAME}",
-        c.greet, c.continue_sign, c.balance
-    )
+    format!("{}，签到成功\n{line2}\n{line3}\n连签 {} 天，余额 {} {COIN_NAME}", c.greet, c.continue_sign, c.balance)
 }
