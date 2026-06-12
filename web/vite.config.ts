@@ -9,12 +9,12 @@ export default defineConfig({
   server: {
     proxy: {
       '/api/ws': {
-        target: 'ws://127.0.0.1:8080',
+        target: 'ws://127.0.0.1:8800',
         ws: true,
         changeOrigin: true,
       },
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: 'http://127.0.0.1:8800',
         changeOrigin: true,
       },
     },

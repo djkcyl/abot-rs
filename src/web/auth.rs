@@ -1,8 +1,8 @@
 //! 网页控制台鉴权 —— QQ 验证码登录 + token 存取 + 权限解析。
 //!
 //! 流程:网页 `POST /api/login/challenge` 取 6 位验证码([`LoginGate::challenge`] 存进带 TTL
-//! 的 [`Rendezvous`],值 `Uin(0)`=待批准);用户私聊 bot 发 `登录 <码>`,登录命令把该码
-//! 批准为发送者 uin([`LoginGate::approve`]);网页轮询 `POST /api/login/poll`
+//! 的 [`Rendezvous`],值 `Uin(0)`=待批准);用户私聊 bot 直接发 6 位码(或 `登录 <码>`),
+//! 登录命令把该码批准为发送者 uin([`LoginGate::approve`]);网页轮询 `POST /api/login/poll`
 //! ([`LoginGate::poll`])拿到已批准 uin → 签发 token 存 `web_token`。WS 握手带 `?token=`,
 //! [`crate::web::hub::Hub`] 查 token 得 [`AuthUser`]。
 
@@ -121,7 +121,7 @@ pub async fn lookup_token(db: &DatabaseConnection, token: &str) -> Option<AuthUs
 #[command(
     "登录",
     description = "绑定网页控制台登录",
-    usage = "在网页控制台点登录拿到验证码后,私聊机器人发送「登录 验证码」即可批准这次网页登录。验证码有过期时间,过期就回网页重新取。"
+    usage = "在网页控制台点登录拿到验证码后,私聊机器人直接发那 6 位验证码(或发「登录 验证码」)即可批准这次网页登录。验证码有过期时间,过期就回网页重新取。"
 )]
 async fn login(
     _pm: PrivateMessage,
@@ -138,7 +138,23 @@ async fn login(
     if gate.approve(code, uin) {
         reply.reply("登录已确认，回到网页即可。").await?;
     } else {
-        reply.reply("验证码已过期，请在网页重新获取。").await?;
+        reply.reply("验证码不对或已过期，请回网页重新获取。").await?;
+    }
+    Ok(())
+}
+
+/// 私聊裸发 6 位数字 —— 免「登录」前缀的批准口。数字消息天然多义:只有恰是待批准的
+/// 验证码时才确认,其余一律静默放行。
+#[command(regex = r"^[0-9]{6}$", name = "登录(免前缀)", description = "私聊直接发 6 位验证码即可登录", hidden = true)]
+async fn login_code(
+    _pm: PrivateMessage,
+    reply: Reply,
+    Sender(uin): Sender,
+    Command(code): Command,
+    State(gate): State<LoginGate>,
+) -> HandlerResult {
+    if gate.approve(&code, uin) {
+        reply.reply("登录已确认，回到网页即可。").await?;
     }
     Ok(())
 }
@@ -157,7 +173,7 @@ pub async fn login_challenge(AxumState(hub): AxumState<Arc<Hub>>) -> Json<Value>
         format!("{:06}", rng.random_range(0..1_000_000u32))
     };
     hub.login_gate().challenge(code.clone());
-    Json(json!({ "code": code, "hint": format!("登录 {code}") }))
+    Json(json!({ "code": code, "hint": format!("直接把 {code} 发给机器人就行，发「登录 {code}」也可以。") }))
 }
 
 /// `POST /api/login/poll` body `{"code":"..."}` → 已批准则签发 token 返回 `{token, authority}`,

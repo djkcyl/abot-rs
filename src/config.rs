@@ -9,7 +9,7 @@
 //! - `MASTER` —— 机器人主人（owner）的 QQ 号；启动就绪后给他私聊发上线通知,且**总是**
 //!   被并入超管集。默认即作者本人；设 `0` 表示「无主人」（不发通知、不并超管）。
 //! - `SUPERUSERS` —— 逗号分隔的 QQ 号清单，喂给 `superuser()` 规则；空/缺失即只有 master。
-//! - `WEB_BIND` —— web 控制台监听地址（默认 `127.0.0.1:8080`）。
+//! - `WEB_BIND` —— web 控制台监听地址（默认 `127.0.0.1:8800`）。
 
 use std::net::SocketAddr;
 
@@ -22,7 +22,7 @@ const DEFAULT_ONEBOT_WS_URL: &str = "ws://127.0.0.1:41573/onebot/v11/ws";
 /// 默认主人 QQ。`0` 表示无主人；经 `MASTER` 环境变量设成你自己的 QQ 号。
 const DEFAULT_MASTER: i64 = 0;
 /// 默认 web 控制台监听地址：仅绑本地（对外暴露请自行反代加 TLS）。
-const DEFAULT_WEB_BIND: &str = "127.0.0.1:8080";
+const DEFAULT_WEB_BIND: &str = "127.0.0.1:8800";
 
 /// 注入用的「主人」句柄：由 `main` 经 `App::data(Master(cfg.master))` 注入，供
 /// `#[event(Ready)]` 等 handler 经 `State<Master>` 取用。`Uin(0)` 表示无主人。
