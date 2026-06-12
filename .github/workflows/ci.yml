@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: fmt · build · clippy · doc
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: abot-rs
+    steps:
+      # [patch.crates-io] 把 nagisa 指到邻仓 ../nagi(开发态常驻),CI 把框架仓
+      # checkout 成同样的邻居,补丁路径原样可解;框架侧没 push 的改动会在这里红出来。
+      - uses: actions/checkout@v6
+        with:
+          path: abot-rs
+      - uses: actions/checkout@v6
+        with:
+          repository: djkcyl/nagisa
+          path: nagi
+
+      # render 的字体栈(fontique)在 Linux 上链系统 fontconfig。
+      - name: 系统依赖
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: abot-rs
+
+      # 门禁四件套(与本地一致):刻意零测试,正确性靠真实协议端连线实测。
+      - name: fmt
+        run: cargo fmt --check
+
+      - name: build
+        run: cargo build
+
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: doc
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings

@@ -39,3 +39,36 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # 开发期:把 nagisa 指到本地工作树以联调框架改动。发布/合并前撤回本段并改回 crates.io 版。
 [patch.crates-io]
 nagisa = { path = "../nagi/crates/nagisa" }
+
+# dev 下依赖一律 O3:出图热路径(parley 整形/swash 栅格/WebP 编码/zstd 解字体)全在
+# 依赖里,这样 dev 构建的渲染速度即接近 release;abot 自身仍 O0,增量编译保持秒级。
+# 代价:依赖首次全量构建变慢(一次性),以及本地 patch 的 nagisa 改动后重编也走 O3。
+# debug = false 关掉第三方依赖的 debuginfo(产物体积/堆积速度大减,编译更快):机器码
+# 不变,panic 位置字符串仍在,只是 backtrace 里第三方帧没有文件行号、调试器进不去其源码。
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+# 自家框架例外:联调 nagisa 时 backtrace 要能落到框架源码行号。opt-level 显式重申
+# (按包覆写不继承 "*" 段,漏写会落回 dev 默认 O0,render 速度就没了)。
+[profile.dev.package.nagisa]
+opt-level = 3
+debug = true
+[profile.dev.package.nagisa-core]
+opt-level = 3
+debug = true
+[profile.dev.package.nagisa-types]
+opt-level = 3
+debug = true
+[profile.dev.package.nagisa-onebot]
+opt-level = 3
+debug = true
+[profile.dev.package.nagisa-milky]
+opt-level = 3
+debug = true
+[profile.dev.package.nagisa-log]
+opt-level = 3
+debug = true
+[profile.dev.package.nagisa-render]
+opt-level = 3
+debug = true
