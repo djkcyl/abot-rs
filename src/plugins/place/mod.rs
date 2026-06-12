@@ -39,7 +39,7 @@ plugin! {
     key = "place",
     name = "画板",
     category = Fun,
-    description = "公共像素画板",
+    description = "大家共用的像素画板，一次落一格慢慢拼图，能放大看、出历程回放。",
     can_disable = true,
 }
 

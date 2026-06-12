@@ -16,7 +16,7 @@ use crate::imaging::UserTheme;
 use super::entity::{bottle, discuss};
 use super::logic;
 
-/// 单页评论图的高度上限(**物理像素**,scale 2 下即逻辑 2000):装箱分页的界,不是硬截断
+/// 单页评论图的高度上限(**物理像素**,scale 1.5 下即逻辑约 2667):装箱分页的界,不是硬截断
 /// ——每页至少一楼,单楼超高就独占一页。
 const COMMENTS_PAGE_MAX_PX: u32 = 4000;
 

@@ -11,6 +11,7 @@ plugin! {
     name = "存活探针",
     category = Tool,
     can_disable = false,
+    description = "发 ping 回 pong，确认机器人在不在线。",
 }
 
 /// `ping` → 回 `pong`:最简存活探针,确认 bot 在线且 dispatch 链路通。

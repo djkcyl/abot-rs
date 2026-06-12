@@ -26,7 +26,7 @@ plugin! {
     key = "bottle",
     name = "漂流瓶",
     category = Fun,
-    description = "跨群漂流瓶，丢一个、捞一个",
+    description = "丢一个瓶子进大海，或捞一个别人丢的，捞到的可以打分、评论。",
     can_disable = true,
 }
 

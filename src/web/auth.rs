@@ -181,4 +181,7 @@ plugin! {
     key = "webconsole",
     name = "网页控制台",
     category = Tool,
+    // 登录入口由网页侧引导,不进用户菜单。
+    hidden = true,
+    description = "网页控制台登录",
 }

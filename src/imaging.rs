@@ -144,10 +144,15 @@ pub fn render_opts() -> RenderOptions {
     build_opts(false, &theme_spec("").palette(false))
 }
 
-/// 拼一份出图选项:字体栈 + WebP + 品牌底栏(色带按色卡),暗色换引擎暗主题,
-/// 强调色写进 `Theme.accent`。
+/// 拼一份出图选项:字体栈 + WebP + 品牌底栏(色带按色卡)、abot 统一的卡宽与缩放,
+/// 暗色换引擎暗主题,强调色写进 `Theme.accent`。
+///
+/// 宽 840 是 abot 卡片的缺省口径(行式多列的帮助卡另覆盖 960,媒体占位图特意小不在此列);
+/// 1.5 倍率在清晰度够用的前提下压字节(QQ 端展示尺寸有限,2.0 浪费)。
 fn build_opts(dark: bool, pal: &Palette) -> RenderOptions {
     let mut o = RenderOptions::default()
+        .with_width(840.0)
+        .with_scale(1.5)
         .with_fonts(crate::fonts::handle())
         .with_format(OutputFormat::Webp)
         .with_footer_chrome(brand_footer(dark, &pal.band));

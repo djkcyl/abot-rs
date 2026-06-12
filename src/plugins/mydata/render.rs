@@ -33,9 +33,9 @@ pub struct MyDataCard {
     pub theme: UserTheme,
 }
 
-/// 本卡片的出图选项:公共底座(按用户主题)+ 卡片宽度与边距(同签到卡)。
+/// 本卡片的出图选项:公共底座(按用户主题,宽度走 abot 缺省)+ 卡片边距(同签到卡)。
 fn render_opts(t: &UserTheme) -> nagisa::render::RenderOptions {
-    t.opts().with_width(640.0).with_padding(Insets::symmetric(30.0, 36.0))
+    t.opts().with_padding(Insets::symmetric(30.0, 36.0))
 }
 
 /// 把一份个人数据渲成卡片图(WebP 字节)。

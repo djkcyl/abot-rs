@@ -17,6 +17,7 @@ plugin! {
     key = "theme",
     name = "主题",
     category = Tool,
+    description = "挑一套出图的主题色和亮暗，给你出的图都按这套来。",
 }
 
 /// 一次输入词解析出的一项设置。
@@ -286,5 +287,5 @@ pub fn palette_card(theme_pref: &str, color_pref: &str, title: &str) -> anyhow::
         );
     });
 
-    Ok(render_document(&d.build(), &t.opts().with_width(720.0).with_padding(Insets::symmetric(28.0, 34.0)))?)
+    Ok(render_document(&d.build(), &t.opts().with_padding(Insets::symmetric(28.0, 34.0)))?)
 }

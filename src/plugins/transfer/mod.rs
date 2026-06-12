@@ -22,6 +22,7 @@ plugin! {
     key = "transfer",
     name = "转账",
     category = Fun,
+    description = "把游戏币转给别人，@ 对方或填 QQ 号都行。",
 }
 
 /// 每日转出上限。今日已转额从 `coin_log` 派生。
