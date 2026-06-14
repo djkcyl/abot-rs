@@ -26,6 +26,14 @@ enum ChatLog {
     PrivatePeer,
 }
 
+/// `chat_stat` 表的列标识(去规范化的每人发言计数)。
+#[derive(DeriveIden)]
+enum ChatStat {
+    Table,
+    Uin,
+    MsgCount,
+}
+
 /// 这支迁移：建消息记录插件自有的 `chat_log` 表 + 常用索引。
 pub struct Migration;
 
@@ -108,10 +116,35 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
+
+        // chat_stat:每人一行的去规范化发言计数(msg_count,主键 uin,库侧缺省 0)。发言榜读它取代每次
+        // 全表聚合 chat_log;按 msg_count 建索引,供「ORDER BY msg_count DESC LIMIT」取顶与「比我多的人」
+        // 范围计数。计数由 `record` 钩子增量自加。
+        manager
+            .create_table(
+                Table::create()
+                    .table(ChatStat::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(ChatStat::Uin).big_integer().not_null().primary_key())
+                    .col(ColumnDef::new(ChatStat::MsgCount).big_integer().not_null().default(0))
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_chat_stat_count")
+                    .table(ChatStat::Table)
+                    .col(ChatStat::MsgCount)
+                    .to_owned(),
+            )
+            .await?;
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager.drop_table(Table::drop().table(ChatStat::Table).if_exists().to_owned()).await?;
         manager.drop_table(Table::drop().table(ChatLog::Table).if_exists().to_owned()).await?;
         Ok(())
     }

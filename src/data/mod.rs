@@ -10,7 +10,7 @@
 //! 插件私有的状态与逻辑归各插件自己（见 `crate::plugins`），只经 `AUser::add_coin`
 //! 触碰共享经济。下面的 `mod` 声明把这些句柄挂在 `crate::data::` 下。
 
-// 实体定义（三张表的行模型）与建表迁移：
+// 实体定义（各表的行模型）与建表迁移：
 pub mod entity;
 pub mod migration;
 
@@ -21,16 +21,23 @@ pub mod user;
 // 与具体表无关的通用助手（如 get-or-create 的 `get_or_insert`）。
 pub mod util;
 
+// 每条消息把发送者账号昵称 / 群名片刷进核心缓存（供排行榜等「列出别人」显示真名）。
+pub mod identity;
+
 // 经验/等级的共享数学（纯函数 + 值对象）：经验是跨插件共享的用户属性，故等级公式归核心。
 pub mod level;
 
 // 「个人数据」的插件自注册贡献槽（与 PluginMigration 同款 inventory 机制）。
 pub mod profile;
 
+// 「排行榜」的插件自注册榜单槽（与 profile 同款 inventory 机制；核心游戏币/经验榜也在此注册）。
+pub mod rank;
+
 // 常用句柄直接在 `crate::data::` 下可达（`use crate::data::{AUser, AGroup, Db, ..}`）。
 pub use group::AGroup;
 pub use level::{LevelChange, LevelInfo, level_info, level_of};
 pub use profile::{GroupedProfile, ProfileGroup, ProfileProvider, ProfileSection, collect_grouped};
+pub use rank::{RankBoard, RankRow, RankSection, collect_boards};
 pub use user::AUser;
 
 use nagisa::prelude::*;

@@ -55,7 +55,7 @@ enum PlaceReplayCache {
     At,
 }
 
-/// 建画板两表的迁移。
+/// 建画板各表的迁移。
 pub struct Migration;
 
 impl MigrationName for Migration {

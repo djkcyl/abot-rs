@@ -28,7 +28,7 @@ pub struct ThemeSpec {
 }
 
 /// 全部主题(五套),首个(远黛蓝,即品牌原配色)是缺省。四基准色槽位语义一致
-/// (主 / 重 / 鲜 / 暖),插件换主题不换映射;暖槽各主题都偏暖——金币这类含义
+/// (主 / 重 / 鲜 / 暖),插件换主题不换映射;暖槽各主题都偏暖——游戏币这类含义
 /// 固定的数字不至于因为换主题而变味。
 pub const THEMES: &[ThemeSpec] = &[
     ThemeSpec {
@@ -99,7 +99,7 @@ pub struct Palette {
     pub deep: String,
     /// 鲜色:增量数字(经验一类)/ 活泼强调。
     pub vivid: String,
-    /// 暖色:金币 / 奖励一类的数字。
+    /// 暖色:游戏币 / 奖励一类的数字。
     pub warm: String,
     /// 主色淡底:淡色填充(今天格 / 表头底)。
     pub soft: String,
@@ -237,6 +237,16 @@ fn brand_footer(dark: bool, band: &str) -> PageChrome {
     .band(band)
 }
 
+/// 把一个自设颜色收进本次亮暗的可读对比区间(保色相)供出图上色:空串或非法形状返
+/// `None`(调用方退回缺省文字色),否则返回收好对比的 `#rrggbb`(亮底压暗 / 暗底提亮)。
+/// 自设昵称颜色([`AUser::alias_color`](crate::data::AUser::alias_color))的统一出图口径——
+/// 不论用户挑什么色,亮底压暗 / 暗底提亮后都立得住。
+pub fn readable_hex(hex: &str, dark: bool) -> Option<String> {
+    let hex = hex.trim();
+    parse_hex(hex)?; // 校验形状,脏值不上色
+    Some(fit_contrast(hex, dark))
+}
+
 /// 把基准色收进给定亮暗的可读对比区间:保色相,亮底压到相对亮度 Y ≤ 0.25(白字色标、
 /// 白底彩字都立得住),暗底提到 Y ≥ 0.28。HSL 的 l 与感知亮度不是一回事(纯黄 l=0.5 在
 /// 白底上仍刺眼),故按 Y 目标二分搜 l。
@@ -371,4 +381,26 @@ pub fn warmup() -> anyhow::Result<()> {
     });
     nagisa::render::render_document(&d.build(), &render_opts().fast())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// readable_hex 空 / 脏值不上色(None);有效色收进对比区间——亮底压暗、暗底提亮,
+    /// 故纯白在亮底变深、在暗底维持亮。
+    #[test]
+    fn readable_contrast() {
+        assert_eq!(readable_hex("", false), None);
+        assert_eq!(readable_hex("   ", false), None);
+        assert_eq!(readable_hex("nope", false), None);
+
+        let light = readable_hex("#ffffff", false).unwrap();
+        let (r, g, b) = parse_hex(&light).unwrap();
+        assert!(luma(r, g, b) <= 0.30, "亮底白字应被压暗到可读, got {light}");
+
+        let dark = readable_hex("#ffffff", true).unwrap();
+        let (r, g, b) = parse_hex(&dark).unwrap();
+        assert!(luma(r, g, b) >= 0.25, "暗底应维持足够亮, got {dark}");
+    }
 }

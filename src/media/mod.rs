@@ -6,10 +6,11 @@
 //!
 //! **归档内容寻址、盘上无后缀**:落盘文件名就是内容 md5(小写 32 位 hex,无扩展名),
 //! `a1b2…` 存 `a1/b2/a1b2…`;同一张图全 bot 只一份、只下一次,「文件名 = 内容 md5」是
-//! 归档不变量([`verify_file`] 据此校验)。wire 文件名只当下载前去重的提示(其 md5 主体
-//! 实测即内容 md5,但**发端可控**,不合形即弃);后缀与真实格式是 `media_file` 里的元数据
-//! (`claimed_ext` 发端报的、会谎;`format` 按下载字节魔数嗅探)。要后缀/格式一律查库,
-//! 不从文件名猜。
+//! 归档不变量([`verify_file`] 据此校验)。wire 文件名(服务器侧给定、发端伪造不了)的 md5 主体当
+//! 下载前去重键:多数图它即内容 md5(`locate` 直接命中);少数被服务器转码过的图(动画表情等)与下载
+//! 字节不符,这时把 stem 记进内容行的 `media_file.filename` 列(带索引),同名图下次按它反查到真 md5、
+//! 免重下——一图仍只一行,不另立行 / 不设状态。**后缀**则不可信(动画表情常 `.jpg` 实为 APNG):
+//! `claimed_ext` 只存档,真实 `format` 一律按下载字节魔数嗅探。要后缀/格式查库,不从文件名猜。
 //!
 //! 其他插件**不自己下载**:对要用的图调 [`ingest`] + [`wait`] —— 已在盘上立即返回路径;
 //! 还在队列/下载中则阻塞到完成(或超时/失败返回错误);要重发本地图用 [`resolve`] 取路径。
@@ -187,14 +188,22 @@ pub async fn ingest(refs: Vec<MediaRef>) -> Vec<String> {
         let ticket = r.md5.clone().unwrap_or_else(|| format!("u{:x}", md5::compute(r.url.as_bytes())));
         tickets.push(ticket.clone());
 
-        // 已在盘上 → 记一次遇见(行缺失则按盘上字节自愈补 done 行),不排队。
-        if r.md5.is_some()
-            && let Some(path) = locate(&ticket)
-        {
-            let (format, size, animated) = sniff_disk(&path).await;
-            record_seen(&svc.db, &ticket, &r.url, r.claimed_ext.as_deref(), Init::Done { format, size, animated })
-                .await;
-            continue;
+        // 已在盘上 → 记一次遇见(行缺失则按盘上字节自愈补 done 行),不排队。多数图 wire 名即内容
+        // md5,直接查盘;查不到再看有无别名(服务器转码副本致名实不符的图),命中其真 md5 同样免下。
+        if r.md5.is_some() {
+            let hit = match locate(&ticket) {
+                Some(path) => Some((ticket.clone(), path)),
+                None => match md5_by_filename(&svc.db, &ticket).await {
+                    Some(real) => locate(&real).map(|path| (real, path)),
+                    None => None,
+                },
+            };
+            if let Some((real, path)) = hit {
+                let (format, size, animated) = sniff_disk(&path).await;
+                record_seen(&svc.db, &real, &r.url, r.claimed_ext.as_deref(), Init::Done { format, size, animated })
+                    .await;
+                continue;
+            }
         }
 
         // 不在盘上:登记/记遇见(新行 pending)。
@@ -258,11 +267,19 @@ fn svc_subscribe(ticket: &str) -> Option<broadcast::Receiver<Outcome>> {
 }
 
 /// 不在途的凭据按「盘 → 库」定结果:盘上有 → 成功;库里 failed/丢文件/没记录 → 对应错误。
-async fn settled(md5: &str) -> anyhow::Result<Stored> {
-    if let Some(path) = locate(md5) {
-        return Ok(Stored { md5: md5.to_string(), path });
+/// 凭据是名实不符图的 wire 名时,本名查不到先按 `filename` 列查出真 md5 再判(也覆盖下载刚完成、临时
+/// 凭据行已删的迟到等待者)。
+async fn settled(ticket: &str) -> anyhow::Result<Stored> {
+    if let Some(path) = locate(ticket) {
+        return Ok(Stored { md5: ticket.to_string(), path });
     }
-    match media_file::Entity::find_by_id(md5).one(&service().db).await? {
+    let md5 = md5_by_filename(&service().db, ticket).await.unwrap_or_else(|| ticket.to_string());
+    if md5 != ticket
+        && let Some(path) = locate(&md5)
+    {
+        return Ok(Stored { md5, path });
+    }
+    match media_file::Entity::find_by_id(&md5).one(&service().db).await? {
         Some(r) if r.status == "failed" => {
             bail!("图片下载失败: {}", r.error.unwrap_or_else(|| "未知原因".into()))
         }
@@ -270,6 +287,13 @@ async fn settled(md5: &str) -> anyhow::Result<Stored> {
         Some(_) => bail!("图片还在队列里但下载任务缺失"), // 崩溃残留,下次启动会重排
         None => bail!("没有这张图片的记录"),
     }
+}
+
+/// 按 wire 名 stem 查它指向的真内容 md5:命中 `filename` 列等于此 stem 的行即返回其 `md5`。多数图
+/// stem 即 md5(`locate` 已先命中、走不到这);走到这的是名实不符的转码图,经此解析到真 md5。无记录 /
+/// 查询失败返回 `None`,调用方退化成重下(不致错)。
+async fn md5_by_filename(db: &DatabaseConnection, stem: &str) -> Option<String> {
+    media_file::Entity::find().filter(media_file::Column::Filename.eq(stem)).one(db).await.ok().flatten().map(|m| m.md5)
 }
 
 // ———— 队列与下载 ————
@@ -350,8 +374,11 @@ async fn download(job: &Job) -> anyhow::Result<(Stored, i64, Option<String>, boo
     Ok((Stored { md5: digest, path }, bytes.len() as i64, format, animated))
 }
 
-/// 下载成功后的登记收尾:真 md5 与凭据不同(无名来源/提示谎报)时删凭据行,
-/// 真 md5 行 upsert 成 done(带字节数、嗅探格式、是否动图)。
+/// 下载成功后的登记收尾:真 md5 行 upsert 成 done(带字节数、嗅探格式、是否动图),并把上游 wire 名
+/// stem 记进 `filename` 列(服务器侧给定、发端伪造不了),供同名图下次经 `ingest` 直接解析、免重下——
+/// 多数图 stem 即真 md5,少数被服务器转码的图(动画表情等)stem 与真 md5 不同,这一列就是那张图认到本行
+/// 的唯一线索。真 md5 与凭据不同(无名来源的 `u<md5(url)>` 临时键 / 转码图的 stem)时,删掉以凭据为键的
+/// 临时 pending 行(它不对应盘上文件)。
 async fn finish_db(
     db: &DatabaseConnection,
     ticket: &str,
@@ -366,6 +393,8 @@ async fn finish_db(
     {
         tracing::warn!(ticket, error = %e, "删图片临时登记行失败");
     }
+    // wire 名 stem(md5 形)记进 filename;无名来源的 `u<...>` 键不是 stem,不记。
+    let filename = is_md5(ticket).then(|| ticket.to_string());
     let row = media_file::ActiveModel {
         md5: Set(stored.md5.clone()),
         url: Set(url.to_string()),
@@ -375,6 +404,7 @@ async fn finish_db(
         format: Set(format),
         animated: Set(Some(animated)),
         done_at: Set(Some(chrono::Utc::now().fixed_offset())),
+        filename: Set(filename),
         ..Default::default()
     };
     let upsert = media_file::Entity::insert(row).on_conflict(
@@ -387,6 +417,7 @@ async fn finish_db(
                 media_file::Column::Format,
                 media_file::Column::Animated,
                 media_file::Column::DoneAt,
+                media_file::Column::Filename,
             ])
             .to_owned(),
     );
@@ -481,7 +512,7 @@ fn is_md5(s: &str) -> bool {
 }
 
 /// 解析(已规范化的)wire 文件名提示:`<32 位 hex>.<1-5 位小写字母数字>` → (md5, 后缀)。
-/// 名字提示是发端可控的,**只**放行这一形(QQ 正常 wire 名即此形),其余整体弃之。
+/// **只**放行这一形(QQ 正常 wire 名即此形,主体可当内容寻址键),其余形态拿不出可用 md5 键、整体弃之。
 fn parse_hint(name: &str) -> Option<(String, String)> {
     let (stem, ext) = name.rsplit_once('.')?;
     let ok = is_md5(stem)

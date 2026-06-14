@@ -4,7 +4,7 @@
 //! 绑端口并收集 `inventory` 的 console 插件建 [`hub::Hub`],`run` 跑 axum(HTTP 静态 +
 //! 单条 WS),`cleanup` 由 shutdown 触发、在 `run` 内完成收束。绑不上端口只记日志,不拖垮 bot 主体。
 //!
-//! 数据交互两条原语(抄 Koishi):[`registry::WebDataService`] (被动推)与
+//! 数据交互两条原语:[`registry::WebDataService`] (被动推)与
 //! [`registry::WebListener`] (主动 RPC)。内置 Provider 包括 plugins、review、config、database、logs,
 //! 鉴权由连接携带的 `?token=` 解析真实 [`registry::AuthUser`],无/失效 token 为 authority 0。
 //!

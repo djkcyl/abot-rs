@@ -22,7 +22,6 @@ use std::time::Duration;
 use nagisa::prelude::*;
 use sea_orm::DatabaseConnection;
 
-use crate::COIN_NAME;
 use crate::data::{AUser, Db};
 use logic::PlaceResult;
 
@@ -145,7 +144,7 @@ async fn palette(reply: Reply) -> HandlerResult {
     order = 5,
     description = "把画板历程做成 GIF 回放",
     usage = "发送「画板回放」看全量回放（每天更新一份，免费），最长 30 秒，节奏按落格总量自动调。\
-「画板回放 7天」现做最近 7 天的回放（从当时的画布演变到现在），按量收费：每 1000 笔 1 金币、\
+「画板回放 7天」现做最近 7 天的回放（从当时的画布演变到现在），按量收费：每 1000 笔 1 游戏币、\
 封顶 88，做之前会报价，回复 y 才扣。"
 )]
 async fn replay_cmd(reply: Reply, Db(db): Db, mut user: AUser, session: Session, args: ArgText) -> HandlerResult {
@@ -167,12 +166,10 @@ async fn replay_cmd(reply: Reply, Db(db): Db, mut user: AUser, session: Session,
     let strokes = logic::strokes_from(&db, start).await?;
     let cost = logic::replay_cost(strokes);
     if user.coin() < cost {
-        reply
-            .reply(format!("这段回放有 {strokes} 笔，现做要 {cost} {COIN_NAME}，你只有 {} {COIN_NAME}", user.coin()))
-            .await?;
+        reply.reply(format!("这段回放有 {strokes} 笔，现做要 {cost} 游戏币，你只有 {} 游戏币", user.coin())).await?;
         return Ok(());
     }
-    reply.reply(format!("最近 {days} 天共 {strokes} 笔，现做要 {cost} {COIN_NAME}。回复 y 确认、n 取消")).await?;
+    reply.reply(format!("最近 {days} 天共 {strokes} 笔，现做要 {cost} 游戏币。回复 y 确认、n 取消")).await?;
     let waiter = session.waiter().from_starter().build();
     let confirmed = waiter
         .recv_parse(Duration::from_secs(60), "取消", |s| match s.trim().to_lowercase().as_str() {
@@ -193,7 +190,7 @@ async fn replay_cmd(reply: Reply, Db(db): Db, mut user: AUser, session: Session,
         }
     }
     if !user.pay(cost, "画板回放").await? {
-        reply.reply(format!("余额不够了，要 {cost} {COIN_NAME}")).await?;
+        reply.reply(format!("余额不够了，要 {cost} 游戏币")).await?;
         return Ok(());
     }
     match replay::render_replay(&db, replay::ReplayArgs { days: Some(days) }).await {
@@ -529,8 +526,7 @@ async fn finish_place(
 ) -> HandlerResult {
     match logic::try_place(user, db, group_id, x, y, color).await? {
         PlaceResult::Placed { cost, balance } => {
-            let line =
-                format!("已落格 ({x},{y}) {}，花费 {cost} {COIN_NAME}，+2 经验，余额 {balance}", colors::name(color));
+            let line = format!("已落格 ({x},{y}) {}，花费 {cost} 游戏币，+2 经验，余额 {balance}", colors::name(color));
             let mut msg = reply.msg().text(line);
             if let Ok(zoom) = render::render_zoom(db, x, y).await {
                 msg = msg.image_bytes(zoom);
@@ -541,7 +537,7 @@ async fn finish_place(
             reply.reply(cooldown_msg(remain_min, interval_min, user.level())).await?;
         }
         PlaceResult::Poor { cost, have } => {
-            reply.reply(format!("余额不足，这格要 {cost} {COIN_NAME}，你只有 {have}")).await?;
+            reply.reply(format!("余额不足，这格要 {cost} 游戏币，你只有 {have}")).await?;
         }
         PlaceResult::Same => {
             reply.reply(format!("这格已经是{}了", colors::name(color))).await?;

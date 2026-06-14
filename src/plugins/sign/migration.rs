@@ -25,6 +25,14 @@ enum SignLog {
     At,
 }
 
+/// `sign_stat` 表的列标识(去规范化的每人累计签到天数)。
+#[derive(DeriveIden)]
+enum SignStat {
+    Table,
+    Uin,
+    DayCount,
+}
+
 /// 这支迁移:建签到插件自有的 `sign_log` 表。迁移名带日期序号前缀(晚于核心序号),记进
 /// `seaql_migrations` 作为已应用标记。
 pub struct Migration;
@@ -60,10 +68,34 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
+
+        // sign_stat:每人一行的去规范化累计签到天数(day_count,主键 uin,库侧缺省 0)。签到榜读它取代每次
+        // 聚合 sign_log;按 day_count 建索引,供取顶与「比我多的人」范围计数。计数由 `do_sign` 置为当前累计。
+        manager
+            .create_table(
+                Table::create()
+                    .table(SignStat::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(SignStat::Uin).big_integer().not_null().primary_key())
+                    .col(ColumnDef::new(SignStat::DayCount).big_integer().not_null().default(0))
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_sign_stat_count")
+                    .table(SignStat::Table)
+                    .col(SignStat::DayCount)
+                    .to_owned(),
+            )
+            .await?;
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager.drop_table(Table::drop().table(SignStat::Table).if_exists().to_owned()).await?;
         manager.drop_table(Table::drop().table(SignLog::Table).if_exists().to_owned()).await?;
         Ok(())
     }

@@ -15,14 +15,14 @@ pub mod entity;
 pub mod logic;
 pub mod migration;
 mod profile;
+mod rank;
 pub mod render;
 
 use chrono::{Local, Timelike};
 use nagisa::prelude::*;
 
-use crate::COIN_NAME; // 全局货币名,单一来源(crate 根)
 use crate::data::AUser;
-use crate::plugins::display_name;
+use crate::plugins::self_shown_name;
 use crate::plugins::sign::logic::{FIRST_GIFT, JACKPOT_GOLD, SignOutcome, do_sign};
 
 // 登记本模块即一个插件:`签到` 命令据此(最长模块前缀)归属 key="sign"。缺省字段
@@ -49,7 +49,7 @@ fn greeting() -> &'static str {
 /// `签到` / `sign` → 每日签到。
 ///
 /// 取发送者 `AUser` + 连接 `Db`，调 [`do_sign`]：当天首签返回 [`SignOutcome::Done`]
-/// （金币各分项 + 连签 + 里程碑/首签/大奖 + 经验/等级），渲成签到卡片图引用回复
+/// （游戏币各分项 + 连签 + 里程碑/首签/大奖 + 经验/等级），渲成签到卡片图引用回复
 /// （[`render::card_image`]，渲染失败退文字）；同日重复返回 [`SignOutcome::Already`]，
 /// 一句文字打发。`do_sign` 返回 `nagisa::Result`，出错直接 `?` 上抛（dispatch 记日志、
 /// 止于此）。
@@ -57,9 +57,11 @@ fn greeting() -> &'static str {
     "签到",
     "sign",
     description = "每日签到领奖励",
-    usage = "发送「签到」每天签一次，凌晨 4 点刷新；连续签到天数越多奖励越高，签到发金币和经验，连签满 7／30／100 天另有里程碑奖励。"
+    usage = "发送「签到」每天签一次，凌晨 4 点刷新；连续签到天数越多奖励越高，签到发游戏币和经验，连签满 7／30／100 天另有里程碑奖励。"
 )]
 async fn sign(reply: Reply, mut user: AUser, m: MessageEvent) -> HandlerResult {
+    use chrono::Datelike;
+
     // user 已持同一份连接（内部 Arc，克隆廉价）；克隆出来避免与 &mut user 借用冲突。
     let db = user.db().clone();
     let outcome = do_sign(&db, &mut user).await?;
@@ -82,8 +84,15 @@ async fn sign(reply: Reply, mut user: AUser, m: MessageEvent) -> HandlerResult {
         return Ok(());
     };
 
+    // 当月签到月历(含今天这次)随结算卡一并出图,与「签到日历」同源派生。
+    let today = crate::data::util::business_day();
+    let cal = logic::calendar_data(&db, user.uin(), today.year(), today.month(), today).await?;
+    let cal_days: std::collections::HashSet<u32> = cal.days.iter().map(|d| d.day()).collect();
+
+    let shown = self_shown_name(&user, &m);
     let card = render::SignCard {
-        name: display_name(&m, user.uin()),
+        name: shown.text,
+        name_color: shown.color,
         uid: user.id(),
         uin: user.uin(),
         avatar: crate::imaging::qq_avatar(user.uin()).await,
@@ -98,6 +107,10 @@ async fn sign(reply: Reply, mut user: AUser, m: MessageEvent) -> HandlerResult {
         continue_sign,
         total_sign,
         balance: user.coin(),
+        cal_days,
+        cal_year: today.year(),
+        cal_month: today.month(),
+        cal_today: today.day(),
         theme: user.render_theme(),
     };
     match render::card_image(&card) {
@@ -128,8 +141,10 @@ async fn calendar(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
     let data = logic::calendar_data(user.db(), user.uin(), today.year(), today.month(), today).await?;
     let month_days: Vec<u32> = data.days.iter().map(|d| d.day()).collect();
 
+    let shown = self_shown_name(&user, &m);
     let card = render::CalendarCard {
-        name: display_name(&m, user.uin()),
+        name: shown.text,
+        name_color: shown.color,
         uid: user.id(),
         uin: user.uin(),
         avatar: crate::imaging::qq_avatar(user.uin()).await,
@@ -169,7 +184,7 @@ async fn calendar(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
 
 /// 卡片的文字退路(渲染失败时用,信息同卡片)。
 fn text_summary(c: &render::SignCard) -> String {
-    let mut line2 = format!("获得 {} {COIN_NAME}", c.gold_add);
+    let mut line2 = format!("获得 {} 游戏币", c.gold_add);
     if c.jackpot {
         line2.push_str(&format!("，触发大奖 +{JACKPOT_GOLD}"));
     }
@@ -186,5 +201,5 @@ fn text_summary(c: &render::SignCard) -> String {
     }
     line3.push_str(&format!("，当前 Lv.{}（{}/{}）", c.level.level, c.level.into_level, c.level.level_span));
 
-    format!("{}，签到成功\n{line2}\n{line3}\n连签 {} 天，余额 {} {COIN_NAME}", c.greet, c.continue_sign, c.balance)
+    format!("{}，签到成功\n{line2}\n{line3}\n连签 {} 天，余额 {} 游戏币", c.greet, c.continue_sign, c.balance)
 }

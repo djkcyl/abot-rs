@@ -170,8 +170,8 @@ impl WebListener for ChatlogQuery {
 
         // content 经 to_jsonb 原样带回(已是 jsonb 数组)。limit 已夹紧,可内联。
         let sql = format!(
-            "SELECT cl.id, cl.uin, u.nickname, cl.from_self, to_jsonb(cl.content) AS content, cl.time \
-             FROM chat_log cl LEFT JOIN \"user\" u ON u.uin = cl.uin \
+            "SELECT cl.id, cl.uin, i.nickname, cl.from_self, to_jsonb(cl.content) AS content, cl.time \
+             FROM chat_log cl LEFT JOIN identity i ON i.uin = cl.uin \
              WHERE {scope_clause}{before_clause} ORDER BY cl.id DESC LIMIT {limit}"
         );
         let stmt = Statement::from_sql_and_values(backend, &sql, values);

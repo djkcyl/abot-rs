@@ -14,7 +14,6 @@
 use nagisa::prelude::*;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
-use crate::COIN_NAME;
 use crate::data::AUser;
 use crate::data::entity::coin_log;
 
@@ -78,7 +77,7 @@ async fn transfer(reply: Reply, mut user: AUser, session: Session, args: Args<Tr
         let fine = n.checked_abs().unwrap_or(i64::MAX).min(user.coin());
         let fined = fine > 0 && user.pay(fine, "罚款·非法转账负数").await?;
         let msg = if fined {
-            format!("转账金额不能为负，已扣除 {fine} {COIN_NAME}")
+            format!("转账金额不能为负，已扣除 {fine} 游戏币")
         } else {
             "转账金额不能为负".to_string()
         };
@@ -108,21 +107,21 @@ async fn transfer(reply: Reply, mut user: AUser, session: Session, args: Args<Tr
     let sent_today = transferred_today(&db, me).await?;
     if sent_today + num > DAILY_LIMIT {
         let left = (DAILY_LIMIT - sent_today).max(0);
-        reply.reply(format!("超过每日转账上限 {DAILY_LIMIT}，今天还能转 {left} {COIN_NAME}（凌晨 4 点刷新）")).await?;
+        reply.reply(format!("超过每日转账上限 {DAILY_LIMIT}，今天还能转 {left} 游戏币（凌晨 4 点刷新）")).await?;
         return Ok(());
     }
 
     // 原子转账:带闸扣付款人 + 入账收款人,余额不足整体回滚(transfer_to 内部建收款人行)。
     if !user.transfer_to(target.0, num, "转账").await? {
-        reply.reply(format!("余额不足，当前 {} {COIN_NAME}", user.coin())).await?;
+        reply.reply(format!("余额不足，当前 {} 游戏币", user.coin())).await?;
         return Ok(());
     }
     reply
         .msg()
         .reply_to_trigger()
-        .text(format!("已转账 {num} {COIN_NAME} 给 "))
+        .text(format!("已转账 {num} 游戏币 给 "))
         .at(target)
-        .text(format!("，余额 {} {COIN_NAME}", user.coin()))
+        .text(format!("，余额 {} 游戏币", user.coin()))
         .send()
         .await?;
     Ok(())

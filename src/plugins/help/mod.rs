@@ -250,13 +250,20 @@ pub(crate) fn detail_card(
                 peer,
             );
             let primary = t.words.first().copied().unwrap_or(t.name);
+            // 槽序列命令带显式用法模板(`查看<游戏币|发言>榜[全局]`):用它当用法行,并隐藏「别名」——
+            // 那些词(查看游戏币榜…)是参数取值不是真别名。其余命令照旧:`主词 + 参数` 自动 synopsis。
+            let has_synopsis = !t.synopsis.is_empty();
             render::CmdInfo {
                 idx: i + 1,
                 primary: primary.to_string(),
-                aliases: t.words.get(1..).unwrap_or(&[]).iter().map(|w| w.to_string()).collect(),
+                aliases: if has_synopsis {
+                    Vec::new()
+                } else {
+                    t.words.get(1..).unwrap_or(&[]).iter().map(|w| w.to_string()).collect()
+                },
                 off: !on,
                 desc: t.description.to_string(),
-                synopsis: synopsis(primary, t.args),
+                synopsis: if has_synopsis { t.synopsis.to_string() } else { synopsis(primary, t.args) },
                 params: t.args.iter().map(|a| (param_head(a), a.desc.to_string())).collect(),
                 note: t.usage.to_string(),
             }

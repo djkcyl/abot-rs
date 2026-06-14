@@ -7,7 +7,6 @@ repository = "https://github.com/djkcyl/abot-rs"
 description = "用 nagisa 搭的多插件 QQ 机器人"
 
 [dependencies]
-aho-corasick = "1.1.4"
 anyhow = "1.0.102"
 arc-swap = "1.9.1"
 axum = { version = "0.8", features = ["ws"] }
@@ -21,10 +20,9 @@ hex = "0.4.3"
 hmac = "0.13.0"
 image = { version = "0.25.5", default-features = false, features = ["png", "gif", "jpeg", "webp"] }
 md5 = "0.7.0"
-nagisa = { version = "0.9", default-features = false, features = ["log", "onebot", "render"] }
+nagisa = { version = "0.10", default-features = false, features = ["log", "onebot", "render"] }
 rand = "0.10.1"
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls"] }
-rqrr = "0.10.1"
 rust-embed = { version = "8", features = ["mime-guess"] }
 schemars = "1.2.1"
 sea-orm = { version = "1.1.20", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono", "with-json"] }
@@ -35,6 +33,7 @@ sha2 = "0.11.0"
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "sync"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tract-onnx = "0.23.1"
 
 # 开发期:把 nagisa 指到本地工作树以联调框架改动。发布/合并前撤回本段并改回 crates.io 版。
 [patch.crates-io]

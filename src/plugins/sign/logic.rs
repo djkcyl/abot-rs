@@ -1,5 +1,4 @@
-//! 签到结算逻辑 —— **全部从 `sign_log` 流水派生**,不设汇总行(单一真相,与 chatlog
-//! 发言数 `COUNT(*)` 派生同款口径):
+//! 签到结算逻辑 —— 连签 / 累计 / 日历**全部从 `sign_log` 流水派生**(单一真相):
 //!
 //! - 去重:今天(业务日)已有行 → [`SignOutcome::Already`];并发兜底靠 `(uin, day)`
 //!   主键,撞键回读确认后同样归 `Already`。
@@ -15,6 +14,7 @@
 
 use nagisa::prelude::*;
 use rand::RngExt as _;
+use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
@@ -22,22 +22,22 @@ use sea_orm::{
 
 use crate::data::AUser;
 use crate::data::level::{LevelChange, LevelInfo};
-use crate::plugins::sign::entity::log;
+use crate::plugins::sign::entity::{log, stat};
 
 /// 签到结果:今天已签到(`Already`)或本次签到完成(`Done`)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignOutcome {
     /// 今天已经签过到了(当日已有流水行),未发放奖励。
     Already,
-    /// 本次签到完成:携带呈现所需的全部结算数据(金币各分项 + 经验 + 等级)。
+    /// 本次签到完成:携带呈现所需的全部结算数据(游戏币各分项 + 经验 + 等级)。
     Done {
-        /// 本次发放的金币总数(基础 + 连签加成 + 手气 + 里程碑 + 首签 + 大奖)。
+        /// 本次发放的游戏币总数(基础 + 连签加成 + 手气 + 里程碑 + 首签 + 大奖)。
         gold_add: i64,
-        /// 金币分项:基础随机额。
+        /// 游戏币分项:基础随机额。
         base: i64,
-        /// 金币分项:连签加成(`min(连签, 30) * 2`)。
+        /// 游戏币分项:连签加成(`min(连签, 30) * 2`)。
         streak_bonus: i64,
-        /// 金币分项:手气随机额。
+        /// 游戏币分项:手气随机额。
         luck: i64,
         /// 包含本次的连续签到天数。
         continue_sign: i32,
@@ -61,7 +61,7 @@ pub enum SignOutcome {
 /// 落账原因(写入 `coin_log.reason`)。
 const SIGN_REASON: &str = "签到";
 
-/// 「大奖」中奖概率。中奖额外 +[`JACKPOT_GOLD`] 金币。稀有度只调这一个常量。
+/// 「大奖」中奖概率。中奖额外 +[`JACKPOT_GOLD`] 游戏币。稀有度只调这一个常量。
 const JACKPOT_PROB: f64 = 0.003;
 /// 「大奖」奖金。
 pub const JACKPOT_GOLD: i64 = 666;
@@ -112,7 +112,7 @@ pub fn live_streak(days_desc: &[chrono::NaiveDate], today: chrono::NaiveDate) ->
 /// `AUser::add_coin`/`add_exp` 原子发奖:
 ///
 /// - 连签:昨日为末的连续天数 + 1(断签或首签即 1)。
-/// - 金币:`base(8..=18)` + `连签加成(min(连签,30)*2)` + `手气(0..=15)` + `里程碑` +
+/// - 游戏币:`base(8..=18)` + `连签加成(min(连签,30)*2)` + `手气(0..=15)` + `里程碑` +
 ///   `首签礼(+66)` + `大奖(0.3% → +666)`。里程碑只在恰好第 7/30/100 天命中一次
 ///   (7→20、30→88、100→200)。
 /// - 经验:`10 + min(连签,30) + (0..=5)`,经 `add_exp` 原子自加并取回等级变化。
@@ -168,6 +168,18 @@ pub async fn do_sign(db: &DatabaseConnection, user: &mut AUser) -> Result<SignOu
             return Ok(SignOutcome::Already);
         }
         return Err(e).context("写签到流水失败");
+    }
+
+    // 维护去规范化的累计签到天数 day_count:直接**置为**当前累计 total_sign(= 该用户 sign_log 行数),
+    // 而不是 +1——供签到榜 O(1) 直读,免每次聚合 sign_log。这步尽力而为(失败只记日志、不挡签到):正因为
+    // 是「置成绝对真值」而非累加,这次没写成也不要紧,下次签到会用当时的累计把它重新覆盖正确,不会越错越远
+    // (对比 chat_stat 是每条消息 +1,漏一次就永久少 1、只能重算修)。
+    let bump = stat::Entity::insert(stat::ActiveModel { uin: Set(uin), day_count: Set(total_sign as i64) })
+        .on_conflict(OnConflict::column(stat::Column::Uin).update_column(stat::Column::DayCount).to_owned())
+        .exec_without_returning(db)
+        .await;
+    if let Err(e) = bump {
+        tracing::warn!(uin, error = %e, "签到累计计数更新失败");
     }
 
     // 经共享经济 API 原子发奖 + 记账(同步 user.model.coin)。

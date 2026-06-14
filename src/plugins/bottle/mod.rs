@@ -16,7 +16,6 @@ mod review;
 use nagisa::prelude::*;
 use serde_json::json;
 
-use crate::COIN_NAME;
 use crate::config::Master;
 use crate::data::AUser;
 use crate::moderation::ContentModerator;
@@ -79,7 +78,7 @@ struct ThrowArgs {
     "扔漂流瓶",
     order = 1,
     description = "把文字或图片装进瓶子丢进大海",
-    usage = "花费 2 币起，含文字加 1、每张图加 3，图片最多 3 张；投放前会把花费报给你、回 y 确认才扣。投放后过内容审核，命中关键词的转人工待审。"
+    usage = "花费 2 币起，含文字加 1、每张图加 3，图片最多 3 张；投放前会把花费报给你、回 y 确认才扣。投放后过内容审核，命中的转人工待审。"
 )]
 async fn throw(
     reply: Reply,
@@ -185,13 +184,13 @@ async fn throw(
     // 花费：基础 + 含文本 + 每图。先挡明显不够的（不够就无需走确认）。
     let cost = THROW_BASE + if has_text { THROW_PER_TEXT } else { 0 } + THROW_PER_IMAGE * images.len() as i64;
     if user.coin() < cost {
-        reply.reply(format!("投放要 {cost} {COIN_NAME}，你只有 {}，不够", user.coin())).await?;
+        reply.reply(format!("投放要 {cost} 游戏币，你只有 {}，不够", user.coin())).await?;
         return Ok(());
     }
 
     // 投放前确认：把花费报给用户，等一句 y/n（非法自动重问，「取消」当否）。
     let summary = format!(
-        "这个瓶子：{}{}，投放要花 {cost} {COIN_NAME}。确认丢出吗？回复 y 确认、n 取消",
+        "这个瓶子：{}{}，投放要花 {cost} 游戏币。确认丢出吗？回复 y 确认、n 取消",
         if has_text { "有文字" } else { "无文字" },
         if images.is_empty() { String::new() } else { format!("、{} 张图", images.len()) },
     );
@@ -218,31 +217,39 @@ async fn throw(
         }
     }
 
-    // 内容审核（确认之后才做）：文本 + 每张图字节。任一不安全 → 转人工待审（pending）并记首个命中详情。
+    // 内容审核（确认之后才做）：文本 + 每张图。审核服务不可用即中止投放；任一不安全转人工待审
+    // （pending），记首个命中详情。
     let moderator = ContentModerator::shared();
     let mut hit: Option<serde_json::Value> = None;
     if has_text {
-        let v = moderator.moderate_text(&text).await;
-        if !v.safe {
-            hit = Some(json!({
-                "label": v.label,
-                "sub_label": v.sub_label,
-                "source": v.source,
-                "where": "text",
-            }));
+        match moderator.moderate_text(&db, &text).await {
+            Ok(v) if !v.safe => {
+                hit = Some(json!({ "label": v.label, "sub_label": v.sub_label, "source": v.source, "where": "text" }));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "内容审核不可用,中止投放");
+                reply.reply("内容审核服务暂时不可用，稍后再投").await?;
+                return Ok(());
+            }
         }
     }
     if hit.is_none() {
         for (i, img) in images.iter().enumerate() {
-            let v = moderator.moderate_image(&img.bytes).await;
-            if !v.safe {
-                hit = Some(json!({
-                    "label": v.label,
-                    "sub_label": v.sub_label,
-                    "source": v.source,
-                    "where": format!("image#{}", i + 1),
-                }));
-                break;
+            match moderator.moderate_image(&db, &img.md5, &img.bytes).await {
+                Ok(v) if !v.safe => {
+                    let r#where = format!("image#{}", i + 1);
+                    hit = Some(
+                        json!({ "label": v.label, "sub_label": v.sub_label, "source": v.source, "where": r#where }),
+                    );
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "内容审核不可用,中止投放");
+                    reply.reply("内容审核服务暂时不可用，稍后再投").await?;
+                    return Ok(());
+                }
             }
         }
     }
@@ -253,7 +260,7 @@ async fn throw(
 
     // 带闸扣费：余额够才扣、才建瓶（确认/审核期间余额可能已变，故扣不动就不建）。
     if !user.pay(cost, "投放漂流瓶").await? {
-        reply.reply("金币不够了").await?;
+        reply.reply("游戏币不够了").await?;
         return Ok(());
     }
 
@@ -302,7 +309,7 @@ async fn fish(reply: Reply, mut user: AUser, bot: Bot) -> HandlerResult {
     };
 
     if !user.pay(FISH_COST, "打捞漂流瓶").await? {
-        reply.reply(format!("打捞一次要 {FISH_COST} {COIN_NAME}，你现在只有 {} {COIN_NAME}", user.coin())).await?;
+        reply.reply(format!("打捞一次要 {FISH_COST} 游戏币，你现在只有 {} 游戏币", user.coin())).await?;
         return Ok(());
     }
 
@@ -415,7 +422,7 @@ async fn remove(reply: Reply, mut user: AUser, State(master): State<Master>, arg
     match logic::delete_bottle(&db, id, me, is_master).await.context("回收漂流瓶")? {
         DeleteOutcome::Deleted => {
             user.add_coin(DELETE_REFUND, "回收漂流瓶退款").await?;
-            reply.reply(format!("已回收漂流瓶 {id}，退还 {DELETE_REFUND} {COIN_NAME}")).await?;
+            reply.reply(format!("已回收漂流瓶 {id}，退还 {DELETE_REFUND} 游戏币")).await?;
         }
         DeleteOutcome::NotFound => {
             reply.reply("没有这个漂流瓶").await?;

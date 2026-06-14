@@ -5,6 +5,9 @@
 //! 后缀/格式是这里的元数据(`claimed_ext` = 发端报的后缀,会谎;`format` = 下载字节魔数嗅探
 //! 的真相)。要用图一律按 md5 走库/走 [`super::wait`],不再有「文件名带不带后缀」的歧义。
 //! 无名来源先以 `u<md5(url)>` 临时键登记,下载完按字节 md5 改真值。
+//!
+//! `filename` 列记上游 wire 文件名的 md5 主体:多数图它即 `md5`;少数被服务器转码的图(动画表情等)
+//! wire 名 md5 与内容 md5 不符,这一列(带索引)就是同名图反查到本行、免重下的线索。一图仍只一行。
 
 use sea_orm::entity::prelude::*;
 
@@ -40,6 +43,10 @@ pub struct Model {
     pub last_used: Option<DateTimeWithTimeZone>,
     /// 下载完成时间。
     pub done_at: Option<DateTimeWithTimeZone>,
+    /// 上游 wire 文件名的 md5 主体(下载时记下,服务器侧给定)。多数图它即 `md5`;少数被服务器转码的图
+    /// (动画表情等)wire 名 md5 与内容 md5 不同,这一列就是同名图认到本行的线索([`super::ingest`] 据此
+    /// 免重下)。无名来源(头像等)为 `None`。索引非唯一。
+    pub filename: Option<String>,
 }
 
 /// 独立登记表,无外联关系。

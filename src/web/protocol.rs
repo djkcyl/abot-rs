@@ -1,4 +1,4 @@
-//! WS 线协议 —— 抄 Koishi console,精简到四类消息。
+//! WS 线协议 —— 四类消息。
 //!
 //! 服务器→前端:`data`(某 DataService 全量)/ `patch`(增量)/ `response`(RPC 回执)/
 //! `pong`(保活);前端→服务器:`send`(主动 RPC)/ `ping`。tag 字段名为 `type`。

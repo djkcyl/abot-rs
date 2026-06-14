@@ -1,5 +1,5 @@
 //! 个人数据卡片 —— 把「个人数据」汇总渲成一张图(经 [`imaging`](crate::imaging) 底座出
-//! WebP)。海报式居中竖排,头部口径同签到卡:圆头像 / 名字·等级 / UID·QQ;主体是金币 +
+//! WebP)。海报式居中竖排,头部口径同签到卡:圆头像 / 名字·等级 / UID·QQ;主体是游戏币 +
 //! 经验存量大数字同行(签到卡的同款排法,只是这里是存量不是增量)、等级进度条;往下
 //! 是各插件经 [`ProfileSection`](crate::data::profile::ProfileSection) 贡献的统计行,游戏
 //! 战绩(有则)另起一段、配色标题头。配色全部来自用户出图主题的标准色卡。渲染失败由
@@ -7,20 +7,21 @@
 
 use nagisa::render::{Align, Doc, Insets, render_document};
 
-use crate::COIN_NAME;
 use crate::data::level::LevelInfo;
 use crate::imaging::UserTheme;
 
 /// 渲卡片要的全部数据(查询现成值 + 呈现素材,这里只管排版)。
 pub struct MyDataCard {
-    /// 显示名(群名片 / 昵称,缺则 QQ 号串)。
+    /// 显示名(自设昵称优先,否则群名片 / 昵称,缺则 QQ 号串)。
     pub name: String,
+    /// 显示名的自设颜色(`#rrggbb` 原始色相,空 = 缺省文字色;只在名取自自设昵称时带)。
+    pub name_color: String,
     /// 站内 UID(`user.id`,自增注册序号)。
     pub uid: i64,
     pub uin: i64,
     /// 头像字节(拉不到为 `None`,头部只排文字)。
     pub avatar: Option<Vec<u8>>,
-    /// 金币余额。
+    /// 游戏币余额。
     pub coin: i64,
     /// 经验总量。
     pub exp: i64,
@@ -49,10 +50,14 @@ pub fn card_image(c: &MyDataCard) -> anyhow::Result<Vec<u8>> {
             i.width_px(88.0).align(Align::Center).rounded(44.0);
         });
     }
+    let name_col = crate::imaging::readable_hex(&c.name_color, c.theme.dark);
     d.paragraph(|p| {
         p.align(Align::Center)
             .styled(c.name.as_str(), |s| {
                 s.weight(600).size(1.15);
+                if let Some(col) = &name_col {
+                    s.color(col);
+                }
             })
             .styled(format!("  Lv.{}", c.level.level), |s| {
                 s.weight(600).size(0.9).color(&pal.primary);
@@ -64,13 +69,13 @@ pub fn card_image(c: &MyDataCard) -> anyhow::Result<Vec<u8>> {
         });
     });
 
-    // —— 主体:金币 + 经验存量大数字同一行。——
+    // —— 主体:游戏币 + 经验存量大数字同一行。——
     d.paragraph(|p| {
         p.align(Align::Center)
             .styled(c.coin.to_string(), |s| {
                 s.weight(700).size(2.2).color(&pal.warm);
             })
-            .styled(format!(" {COIN_NAME}    "), |s| {
+            .styled(" 游戏币    ", |s| {
                 s.color(&pal.muted).size(0.95);
             })
             .styled(c.exp.to_string(), |s| {

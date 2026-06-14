@@ -13,10 +13,3 @@ pub mod media;
 pub mod moderation;
 pub mod plugins;
 pub mod web;
-
-/// 游戏货币名 —— **整个 abot 的全局设计常量**，单一来源。
-///
-/// 所有涉及货币的插件（签到 / 赠送 / 排行 / 赛马 …）一律引用 `crate::COIN_NAME`，
-/// 不在各自模块里重复定义；改名只此一处。
-/// （如需运行期可配，后续可提升进 [`config::Config`] 从环境读取，调用点不变。）
-pub const COIN_NAME: &str = "游戏币";

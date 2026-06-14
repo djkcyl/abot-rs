@@ -1,16 +1,15 @@
-//! 个人数据插件 —— 命令 `个人数据` / `我的` / `资料`，展示用户的金币/经验/等级/发言数，
+//! 个人数据插件 —— 命令 `个人数据` / `我的` / `资料`，展示用户的游戏币/经验/等级/发言数，
 //! 再加上各插件经 [`ProfileSection`](crate::data::profile::ProfileSection) 自注册贡献的行
 //! (如签到的连签)。命令-only(无自有表)：核心数据走 `AUser`，插件数据走 [`collect_grouped`]，
-//! 故本插件**不**引用任何具体插件、也不破插件自有数据的墙。汇总渲成卡片图回复
+//! 故本插件**不**引用任何具体插件、也不碰插件自有数据。汇总渲成卡片图回复
 //! ([`render`],渲不出退文字)。
 
 pub mod render;
 
 use nagisa::prelude::*;
 
-use crate::COIN_NAME;
 use crate::data::{AUser, collect_grouped};
-use crate::plugins::display_name;
+use crate::plugins::self_shown_name;
 
 plugin! {
     key = "mydata",
@@ -30,14 +29,16 @@ plugin! {
     "资料",
     "mydata",
     description = "查看自己的数据",
-    usage = "发送「个人数据」（或「我的」「资料」）查看金币、经验、等级，以及签到、发言等各功能的累计数据，赛马等游戏战绩另起一段显示。"
+    usage = "发送「个人数据」（或「我的」「资料」）查看游戏币、经验、等级，以及签到、发言等各功能的累计数据，赛马等游戏战绩另起一段显示。"
 )]
 async fn mydata(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
     // 各插件自注册的贡献行,按分组分桶:普通统计(签到/发言…)与游戏战绩(画板…)分段。
     let grouped = collect_grouped(user.db(), user.uin()).await;
 
+    let shown = self_shown_name(&user, &m);
     let card = render::MyDataCard {
-        name: display_name(&m, user.uin()),
+        name: shown.text,
+        name_color: shown.color,
         uid: user.id(),
         uin: user.uin(),
         avatar: crate::imaging::qq_avatar(user.uin()).await,
@@ -65,7 +66,7 @@ async fn mydata(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
 fn text_summary(c: &render::MyDataCard) -> String {
     let mut lines = vec![
         format!("{} 的数据", c.name),
-        format!("{COIN_NAME}：{}", c.coin),
+        format!("游戏币：{}", c.coin),
         format!("等级：Lv.{}（{}/{}），经验 {}", c.level.level, c.level.into_level, c.level.level_span, c.exp),
     ];
     lines.extend(c.stats.iter().cloned());

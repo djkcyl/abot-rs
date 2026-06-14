@@ -1,4 +1,4 @@
-//! DatabaseProvider —— 通用 DB 表管理(phpMyAdmin 级)。
+//! DatabaseProvider —— 通用 DB 表管理。
 //! `database` DataService 自动发现 public 下所有表 + 行数;`db/query` 带筛选/排序/搜索/分页读;
 //! `db/insert`/`db/update`/`db/delete` 写。
 //!

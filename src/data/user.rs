@@ -6,7 +6,7 @@
 //! 归各插件自己，只经这些方法触碰共享经济。
 //!
 //! 设计要点：
-//! - 金币改动一律走**原子增量** `col_expr(Coin, Expr::col(Coin) ± delta)`，绝不 read-modify-write。
+//! - 游戏币改动一律走**原子增量** `col_expr(Coin, Expr::col(Coin) ± delta)`，绝不 read-modify-write。
 //! - **花费**一律走带闸 `WHERE coin >= amount`（[`pay`](AUser::pay)/[`transfer_to`](AUser::transfer_to)），
 //!   从根上杜绝 check-then-act 超支。
 //! - 方法返回 `nagisa::Result`（内部用 nagisa 的 [`Context::context`] 转错），handler 直接 `?`。
@@ -15,7 +15,7 @@ use nagisa::prelude::*;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    Set, TransactionTrait,
+    QuerySelect, Set, TransactionTrait,
 };
 
 use crate::data::entity::{coin_log, user};
@@ -85,7 +85,44 @@ impl AUser {
         crate::imaging::UserTheme::resolve(self.theme(), self.theme_color())
     }
 
-    /// 当前金币余额（`self.model` 侧的值，经各写方法与库保持同步）。
+    /// 自设昵称（`user.alias`，空串 = 未设）。呈现时优先级最高，经「改名」命令改。
+    pub fn alias(&self) -> &str {
+        &self.model.alias
+    }
+
+    /// 改自设昵称（调用方先校验长度，这里原样落库并同步 `self.model`；传空串即清除）。
+    pub async fn set_alias(&mut self, alias: &str) -> Result<()> {
+        user::Entity::update_many()
+            .col_expr(user::Column::Alias, Expr::value(alias))
+            .filter(user::Column::Uin.eq(self.model.uin))
+            .exec(&self.db)
+            .await
+            .context("写自设昵称失败")?;
+        self.model.alias = alias.to_string();
+        Ok(())
+    }
+
+    /// 自设昵称颜色（`user.alias_color`，`#rrggbb` 原始色相，空串 = 不上色）。出图时经
+    /// [`imaging::readable_hex`](crate::imaging::readable_hex) 收对比，只在显示名取自
+    /// [`alias`](Self::alias) 时生效；经「昵称颜色」命令改。
+    pub fn alias_color(&self) -> &str {
+        &self.model.alias_color
+    }
+
+    /// 改自设昵称颜色（调用方先归一成 `#rrggbb` 或空串，这里原样落库并同步 `self.model`；
+    /// 传空串即清除上色）。
+    pub async fn set_alias_color(&mut self, color: &str) -> Result<()> {
+        user::Entity::update_many()
+            .col_expr(user::Column::AliasColor, Expr::value(color))
+            .filter(user::Column::Uin.eq(self.model.uin))
+            .exec(&self.db)
+            .await
+            .context("写自设昵称颜色失败")?;
+        self.model.alias_color = color.to_string();
+        Ok(())
+    }
+
+    /// 当前游戏币余额（`self.model` 侧的值，经各写方法与库保持同步）。
     pub fn coin(&self) -> i64 {
         self.model.coin
     }
@@ -131,6 +168,13 @@ impl AUser {
             tracing::info!(uin, coin = model.coin, "新用户注册");
         }
         Ok(Self { model, db: db.clone() })
+    }
+
+    /// 按 `uin` 取用户但**绝不建档**：命中包成句柄，缺失返回 `None`。专给「只对已有用户动手」的
+    /// 场景——如管理员调账，不能给一个素未谋面的 QQ 号凭空建号。寻常路径仍用取或建的 [`get`](Self::get)。
+    pub async fn find(db: &DatabaseConnection, uin: i64) -> Result<Option<Self>> {
+        let model = user::Entity::find_by_id(uin).one(db).await.context("查询用户")?;
+        Ok(model.map(|model| Self { model, db: db.clone() }))
     }
 
     /// 批量按 `uin` 取用户：一条 `WHERE uin IN (..)` 查出已存在的，缺失的批量插默认行，返回的
@@ -193,7 +237,7 @@ impl AUser {
         Ok(out)
     }
 
-    /// 原子增减金币（`UPDATE coin = coin + delta`，**绝不**读改写）+ 追一行 [`coin_log`]，最后同步
+    /// 原子增减游戏币（`UPDATE coin = coin + delta`，**绝不**读改写）+ 追一行 [`coin_log`]，最后同步
     /// `self.model.coin`。`delta` 可正可负；**花费请用 [`pay`](Self::pay)**（带闸防超支），本方法只
     /// 用于奖励/无条件加减（罚款等已知封顶的扣减也可，但不带余额下限保护）。
     pub async fn add_coin(&mut self, delta: i64, reason: impl Into<String>) -> Result<()> {
@@ -244,6 +288,69 @@ impl AUser {
         self.model.coin -= amount; // 镜像内存侧
         Ok(true)
     }
+
+    /// **设额 / 带地板扣减的底座（锁行读-改-写）**：在一个事务里对本行排他锁定（`SELECT … FOR
+    /// UPDATE`）、读到不会被并发盖掉的旧值，用 `new_from_old(旧)` 算新余额（夹到 ≥ 0），仅当与旧值
+    /// 有差（`delta ≠ 0`）才落库 + 追一行 [`coin_log`]（`delta` 带符号、`balance` = 新值），最后同步
+    /// `self.model.coin`。返回 `(旧, 新)` 余额。
+    ///
+    /// 与纯原子增量的 [`add_coin`](Self::add_coin) 不同：**设成某值 / 扣到地板**都得先知道旧值才能
+    /// 算新值，故必须锁行（否则并发下旧值会漂、`delta` 与 `balance` 失配）。专供管理员低频调整，普通
+    /// 经济路径仍走原子增量 / 带闸扣款。
+    async fn modify_coin_locked<F>(&mut self, reason: String, new_from_old: F) -> Result<(i64, i64)>
+    where
+        F: FnOnce(i64) -> i64 + Send,
+    {
+        let txn = self.db.begin().await.context("开启改额事务")?;
+        // 排他锁定目标行，读到准确旧值（FOR UPDATE）。
+        let row = user::Entity::find_by_id(self.model.uin)
+            .lock_exclusive()
+            .one(&txn)
+            .await
+            .context("锁定用户行")?
+            .ok_or_else(|| Error::action(format!("改额目标用户 {} 不存在", self.model.uin)))?;
+        let old = row.coin;
+        let new = new_from_old(old).max(0); // 余额永不为负
+        let delta = new - old;
+        if delta != 0 {
+            user::Entity::update_many()
+                .col_expr(user::Column::Coin, Expr::value(new))
+                .filter(user::Column::Uin.eq(self.model.uin))
+                .exec(&txn)
+                .await
+                .context("写新余额")?;
+            coin_log::ActiveModel {
+                id: NotSet,
+                uin: Set(self.model.uin),
+                delta: Set(delta),
+                balance: Set(new),
+                reason: Set(reason),
+                at: NotSet,
+            }
+            .insert(&txn)
+            .await
+            .context("写改额流水")?;
+        }
+        txn.commit().await.context("提交改额")?;
+        self.model.coin = new; // 镜像内存侧
+        Ok((old, new))
+    }
+
+    /// **设额**（管理员）：把余额原子设成 `target`（负数夹到 0），追一行 [`coin_log`]（`reason` 由调用方
+    /// 给）。返回应用前后的 `(旧, 新)`；设成原值（`delta = 0`）则不写流水。寻常加减**不要**用它——那是
+    /// 原子增量 [`add_coin`](Self::add_coin) / 带闸扣款 [`pay`](Self::pay) 的活。
+    pub async fn set_coin(&mut self, target: i64, reason: impl Into<String>) -> Result<(i64, i64)> {
+        self.modify_coin_locked(reason.into(), move |_old| target).await
+    }
+
+    /// **带地板扣减**（管理员）：扣 `min(amount, 余额)`——够则扣满 `amount`、不够则扣到 0 为止，**绝不**
+    /// 让余额变负。`amount` 应 ≥ 0。追一行 [`coin_log`]（`reason` 由调用方给）。返回**实际**扣减额
+    /// （≥ 0；对方已是 0 则为 0、不写流水）。带闸花费仍走 [`pay`](Self::pay)（不够则一动不动），本方法是
+    /// 管理员「能扣多少扣多少」的钝刀。
+    pub async fn deduct_floor(&mut self, amount: i64, reason: impl Into<String>) -> Result<i64> {
+        let (old, new) = self.modify_coin_locked(reason.into(), move |old| old - amount).await?;
+        Ok(old - new)
+    }
 }
 
 /// 在任意连接/事务上对一个 uin 做原子加币 + 写流水（[`AUser::add_coin`] / `transfer_to` 入账侧共用）。
@@ -272,7 +379,7 @@ pub(crate) async fn add_coin_on<C: ConnectionTrait>(conn: &C, uin: i64, delta: i
     }
     .insert(conn)
     .await
-    .context("写金币流水")?;
+    .context("写游戏币流水")?;
     Ok(())
 }
 
@@ -314,7 +421,8 @@ fn default_active() -> user::ActiveModel {
         uin: NotSet,
         id: NotSet, // 站内 UID 由库侧序列发号
         coin: NotSet,
-        nickname: NotSet,
+        alias: NotSet,
+        alias_color: NotSet,
         exp: NotSet,
         banned: NotSet,
         theme: NotSet,
@@ -324,6 +432,8 @@ fn default_active() -> user::ActiveModel {
 }
 
 /// 提取器：把**消息发送者**取或建成 `AUser`。非消息事件 → `Skip`；连接缺失或建号出错 → `Reject::Error`。
+/// 发送者的昵称 / 群名片缓存由 `chatlog` 的每条消息钩子统一同步（见 [`crate::data::identity`]），
+/// 不在此处写，故本提取器只负责取或建。
 #[async_trait]
 impl FromContext for AUser {
     async fn from_context(ctx: &Ctx) -> Extracted<Self> {

@@ -9,6 +9,9 @@ use crate::data::migration::PluginMigration;
 nagisa::inventory::submit! {
     PluginMigration(|| Box::new(Migration))
 }
+nagisa::inventory::submit! {
+    PluginMigration(|| Box::new(MigrationFilename))
+}
 
 /// `media_file` 表的列标识。
 #[derive(DeriveIden)]
@@ -27,6 +30,7 @@ enum MediaFile {
     LastSeen,
     LastUsed,
     DoneAt,
+    Filename,
 }
 
 /// 这支迁移:建顶层媒体服务的 `media_file` 登记表 + 状态索引。
@@ -91,6 +95,48 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager.drop_table(Table::drop().table(MediaFile::Table).if_exists().to_owned()).await?;
+        Ok(())
+    }
+}
+
+/// 这支迁移:给 `media_file` 补 `filename` 列(+ 非唯一索引)——下载时记下上游 wire 文件名的 md5 主体。
+/// 多数图它即主键 `md5`;少数被服务器转码的图(动画表情等)wire 名 md5 与内容 md5 不同,这一列就是同名图
+/// 认到本行、免重下的线索。无名来源为 `NULL`。
+pub struct MigrationFilename;
+
+impl MigrationName for MigrationFilename {
+    fn name(&self) -> &str {
+        "m20260614_000008_media_file_filename"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for MigrationFilename {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(MediaFile::Table)
+                    .add_column_if_not_exists(ColumnDef::new(MediaFile::Filename).string().null())
+                    .to_owned(),
+            )
+            .await?;
+        // 按 wire 名 stem 反查真 md5 用(名实不符的转码图);非唯一(同内容偶可多名)。
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_media_file_filename")
+                    .table(MediaFile::Table)
+                    .col(MediaFile::Filename)
+                    .to_owned(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager.alter_table(Table::alter().table(MediaFile::Table).drop_column(MediaFile::Filename).to_owned()).await?;
         Ok(())
     }
 }

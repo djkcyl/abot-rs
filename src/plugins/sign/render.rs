@@ -1,21 +1,22 @@
 //! 签到卡片 —— 签到成功的结算渲成一张图(经 [`imaging`](crate::imaging) 底座出 WebP)。
-//! 海报式居中竖排:圆头像 / 名字·等级 / UID·QQ·第 N 次 / 问候(楷体放大) / 金币 + 经验
-//! 大数字同行 / 连签 / 彩头色标(有则) / 等级进度条 / 收尾行。配色全部来自用户出图
-//! 主题的标准色卡([`UserTheme`] 的 [`Palette`](crate::imaging::Palette):金币暖槽 /
-//! 经验鲜槽 / 等级与进度主槽 / 里程碑重槽,亮暗与底栏色带都跟着主题)。渲染失败由
-//! 调用方退回文字。
+//! 海报式居中竖排:圆头像 / 名字·等级 / UID·QQ·第 N 次 / 问候(楷体放大) / 游戏币 + 经验
+//! 大数字同行 / 连签 / 彩头色标(有则) / 等级进度条 / 收尾行 / 当月签到月历。配色全部
+//! 来自用户出图主题([`UserTheme`] 的 [`Palette`]:游戏币暖槽 / 经验鲜槽 / 等级与进度
+//! 主槽 / 里程碑重槽,亮暗与底栏色带都跟着主题)。卡尾月历网格与「签到日历」命令
+//! ([`calendar_image`])同源。渲染失败由调用方退回文字。
 
 use nagisa::render::{Align, Doc, FontRole, Insets, render_document};
 
-use crate::COIN_NAME;
 use crate::data::level::LevelInfo;
-use crate::imaging::UserTheme;
+use crate::imaging::{Palette, UserTheme};
 use crate::plugins::sign::logic::{FIRST_GIFT, JACKPOT_GOLD};
 
 /// 渲卡片要的全部数据(结算现成值 + 呈现素材,这里只管排版)。
 pub struct SignCard {
-    /// 显示名(群名片 / 昵称,缺则 QQ 号串)。
+    /// 显示名(自设昵称优先,否则群名片 / 昵称,缺则 QQ 号串)。
     pub name: String,
+    /// 显示名的自设颜色(`#rrggbb` 原始色相,空 = 缺省文字色;只在名取自自设昵称时带)。
+    pub name_color: String,
     /// 站内 UID(`user.id`,自增注册序号)。
     pub uid: i64,
     pub uin: i64,
@@ -35,6 +36,12 @@ pub struct SignCard {
     pub total_sign: i32,
     /// 发奖后的余额。
     pub balance: i64,
+    /// 当月(业务日口径)签过的「几号」集合,卡尾画一张当月小月历(签到成功即附上)。
+    pub cal_days: std::collections::HashSet<u32>,
+    /// 月历年月与「今天几号」——签到成功即当前业务日,故恒为当前月,`cal_today` 高亮今天。
+    pub cal_year: i32,
+    pub cal_month: u32,
+    pub cal_today: u32,
     /// 出图主题(亮暗 + 标准色卡,按用户偏好经 `AUser::render_theme` 解析)。
     pub theme: UserTheme,
 }
@@ -55,10 +62,14 @@ pub fn card_image(c: &SignCard) -> anyhow::Result<Vec<u8>> {
             i.width_px(88.0).align(Align::Center).rounded(44.0);
         });
     }
+    let name_col = crate::imaging::readable_hex(&c.name_color, c.theme.dark);
     d.paragraph(|p| {
         p.align(Align::Center)
             .styled(c.name.as_str(), |s| {
                 s.weight(600).size(1.15);
+                if let Some(col) = &name_col {
+                    s.color(col);
+                }
             })
             .styled(format!("  Lv.{}", c.level.level), |s| {
                 s.weight(600).size(0.9).color(&pal.primary);
@@ -80,13 +91,13 @@ pub fn card_image(c: &SignCard) -> anyhow::Result<Vec<u8>> {
         });
     });
 
-    // —— 主体:金币 + 经验大数字同一行。——
+    // —— 主体:游戏币 + 经验大数字同一行。——
     d.paragraph(|p| {
         p.align(Align::Center)
             .styled(format!("+{}", c.gold_add), |s| {
                 s.weight(700).size(2.2).color(&pal.warm);
             })
-            .styled(format!(" {COIN_NAME}    "), |s| {
+            .styled(" 游戏币    ", |s| {
                 s.color(&pal.muted).size(0.95);
             })
             .styled(format!("+{}", c.exp_gain), |s| {
@@ -137,7 +148,7 @@ pub fn card_image(c: &SignCard) -> anyhow::Result<Vec<u8>> {
     d.paragraph(|p| {
         p.align(Align::Center).styled(
             format!(
-                "距 Lv.{} 还差 {} · 余额 {} {COIN_NAME}",
+                "距 Lv.{} 还差 {} · 余额 {} 游戏币",
                 c.level.level + 1,
                 c.level.level_span - c.level.into_level,
                 c.balance
@@ -148,13 +159,94 @@ pub fn card_image(c: &SignCard) -> anyhow::Result<Vec<u8>> {
         );
     });
 
+    // —— 当月签到月历:与「签到日历」命令同一张网格,签到成功即附在卡尾。——
+    d.divider();
+    d.paragraph(|p| {
+        p.align(Align::Center).styled(format!("{} 月签到", c.cal_month), |s| {
+            s.color(&pal.muted).size(0.85).weight(500);
+        });
+    });
+    push_calendar_grid(&mut d, pal, c.cal_year, c.cal_month, &c.cal_days, Some(c.cal_today))?;
+
     Ok(render_document(&d.build(), &render_opts(&c.theme))?)
+}
+
+/// 把某月的签到月历(周一起头的七列网格)排进给定文档:首周前与末周后补空对齐七列,
+/// 开网格线、表头浅底;签过的日子满底色反白加重、今天主色淡底加重并在日数下加着重点、
+/// 未到的日子弱化。签到成功卡与「签到日历」卡共用,落格口径一致。`today` 为本月的
+/// 「今天」几号(该月非当前月时给 `None`,不高亮)。
+fn push_calendar_grid(
+    d: &mut Doc,
+    pal: &Palette,
+    year: i32,
+    month: u32,
+    days: &std::collections::HashSet<u32>,
+    today: Option<u32>,
+) -> anyhow::Result<()> {
+    use chrono::Datelike;
+
+    let first = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .ok_or_else(|| anyhow::anyhow!("非法年月 {}-{}", year, month))?;
+    let next = if month == 12 {
+        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .expect("下月一号必然合法");
+    let n_days = (next - first).num_days() as u32;
+    let offset = first.weekday().num_days_from_monday() as usize;
+
+    let mut cells: Vec<String> = vec![String::new(); offset];
+    cells.extend((1..=n_days).map(|day| day.to_string()));
+    while !cells.len().is_multiple_of(7) {
+        cells.push(String::new());
+    }
+    d.table(|t| {
+        t.head(["一", "二", "三", "四", "五", "六", "日"]);
+        t.align([Align::Center; 7]);
+        t.expand();
+        t.pad_y(8.0);
+        for week in cells.chunks(7) {
+            t.row(week.iter().cloned());
+        }
+        for (i, cell) in cells.iter().enumerate() {
+            let Ok(day) = cell.parse::<u32>() else { continue };
+            let (row, col) = (i / 7, i % 7);
+            if days.contains(&day) {
+                // 签过:满底色 + 反白加重。
+                t.cell_fill(row, col, &pal.primary);
+                t.cell_style(row, col, |s| {
+                    s.color(&pal.on_color).weight(600);
+                });
+            } else if today == Some(day) {
+                // 今天还没签:主色淡底 + 主色加重。
+                t.cell_fill(row, col, &pal.soft);
+                t.cell_style(row, col, |s| {
+                    s.color(&pal.primary).weight(600);
+                });
+            } else if today.is_some_and(|t0| day > t0) {
+                // 未到的日子:弱化。
+                t.cell_style(row, col, |s| {
+                    s.color(&pal.muted);
+                });
+            }
+            // 今天的日数下加着重点(颜色跟随该格文字色:已签反白点、未签主题色点)。
+            if today == Some(day) {
+                t.cell_style(row, col, |s| {
+                    s.dot();
+                });
+            }
+        }
+    });
+    Ok(())
 }
 
 /// 渲日历要的数据(查询现成值,这里只管排版)。
 pub struct CalendarCard {
-    /// 显示名(群名片 / 昵称,缺则 QQ 号串)。
+    /// 显示名(自设昵称优先,否则群名片 / 昵称,缺则 QQ 号串)。
     pub name: String,
+    /// 显示名的自设颜色(`#rrggbb` 原始色相,空 = 缺省文字色;只在名取自自设昵称时带)。
+    pub name_color: String,
     /// 站内 UID(`user.id`)。
     pub uid: i64,
     pub uin: i64,
@@ -178,20 +270,7 @@ pub struct CalendarCard {
 /// 下加着重点**(引擎文字装饰,画进行距不撑格)且未签时淡底、未到的日子弱化)、
 /// 底部统计行(连签 / 本月 / 累计)。
 pub fn calendar_image(c: &CalendarCard) -> anyhow::Result<Vec<u8>> {
-    use chrono::Datelike;
-
     let pal = &c.theme.palette;
-    let first = chrono::NaiveDate::from_ymd_opt(c.year, c.month, 1)
-        .ok_or_else(|| anyhow::anyhow!("非法年月 {}-{}", c.year, c.month))?;
-    let next = if c.month == 12 {
-        chrono::NaiveDate::from_ymd_opt(c.year + 1, 1, 1)
-    } else {
-        chrono::NaiveDate::from_ymd_opt(c.year, c.month + 1, 1)
-    }
-    .expect("下月一号必然合法");
-    let n_days = (next - first).num_days() as u32;
-    let offset = first.weekday().num_days_from_monday() as usize;
-
     let mut d = Doc::new();
 
     // —— 顶部:用户信息(同签到卡口径)。——
@@ -200,9 +279,13 @@ pub fn calendar_image(c: &CalendarCard) -> anyhow::Result<Vec<u8>> {
             i.width_px(72.0).align(Align::Center).rounded(36.0);
         });
     }
+    let name_col = crate::imaging::readable_hex(&c.name_color, c.theme.dark);
     d.paragraph(|p| {
         p.align(Align::Center).styled(c.name.as_str(), |s| {
             s.weight(600).size(1.1);
+            if let Some(col) = &name_col {
+                s.color(col);
+            }
         });
     });
     d.paragraph(|p| {
@@ -218,50 +301,8 @@ pub fn calendar_image(c: &CalendarCard) -> anyhow::Result<Vec<u8>> {
         });
     });
 
-    // —— 月历:周一起头,首周前与末周后补空串对齐七列;开网格线、表头浅底,照着
-    //    真日历来。今天的日数下加着重点(引擎文字装饰,画进行距、不撑格)。——
-    let mut cells: Vec<String> = vec![String::new(); offset];
-    cells.extend((1..=n_days).map(|day| day.to_string()));
-    while !cells.len().is_multiple_of(7) {
-        cells.push(String::new());
-    }
-    d.table(|t| {
-        t.head(["一", "二", "三", "四", "五", "六", "日"]);
-        t.align([Align::Center; 7]);
-        t.expand();
-        t.pad_y(8.0);
-        for week in cells.chunks(7) {
-            t.row(week.iter().cloned());
-        }
-        for (i, cell) in cells.iter().enumerate() {
-            let Ok(day) = cell.parse::<u32>() else { continue };
-            let (row, col) = (i / 7, i % 7);
-            if c.days.contains(&day) {
-                // 签过:满底色 + 反白加重。
-                t.cell_fill(row, col, &pal.primary);
-                t.cell_style(row, col, |s| {
-                    s.color(&pal.on_color).weight(600);
-                });
-            } else if c.today == Some(day) {
-                // 今天还没签:主色淡底 + 主色加重。
-                t.cell_fill(row, col, &pal.soft);
-                t.cell_style(row, col, |s| {
-                    s.color(&pal.primary).weight(600);
-                });
-            } else if c.today.is_some_and(|t0| day > t0) {
-                // 未到的日子:弱化。
-                t.cell_style(row, col, |s| {
-                    s.color(&pal.muted);
-                });
-            }
-            // 今天的日数下加着重点(颜色跟随该格文字色:已签反白点、未签主题色点)。
-            if c.today == Some(day) {
-                t.cell_style(row, col, |s| {
-                    s.dot();
-                });
-            }
-        }
-    });
+    // —— 月历网格(周一起头,签过/今天/未到三态),签到卡与本卡共用同一口径。——
+    push_calendar_grid(&mut d, pal, c.year, c.month, &c.days, c.today)?;
 
     // —— 底部:统计行。——
     d.paragraph(|p| {

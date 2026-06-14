@@ -1,4 +1,4 @@
-//! sea-orm 实体定义 —— 三张表的行模型，**只**描述形状，不含任何业务方法。
+//! sea-orm 实体定义 —— 各表的行模型，**只**描述形状，不含任何业务方法。
 //!
 //! 业务方法住在 `AUser` / `AGroup` 句柄上（包住这里的 `Model` + 一份连接），不在实体里。
 //! 每个子模块按 sea-orm 惯例导出 `Entity` / `Model` / `ActiveModel` / `Column` …，
@@ -9,4 +9,6 @@
 
 pub mod coin_log;
 pub mod group;
+pub mod identity;
+pub mod member_card;
 pub mod user;
