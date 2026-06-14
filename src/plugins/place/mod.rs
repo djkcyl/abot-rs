@@ -172,19 +172,17 @@ async fn replay_cmd(reply: Reply, Db(db): Db, mut user: AUser, session: Session,
     reply.reply(format!("最近 {days} 天共 {strokes} 笔，现做要 {cost} 游戏币。回复 y 确认、n 取消")).await?;
     let waiter = session.waiter().from_starter().build();
     let confirmed = waiter
-        .recv_parse(Duration::from_secs(60), "取消", |s| match s.trim().to_lowercase().as_str() {
-            "y" | "yes" | "是" | "确认" | "嗯" => Ok(true),
-            "n" | "no" | "否" | "不" | "算了" => Ok(false),
-            _ => Err("回复 y 确认、n 取消".to_string()),
+        .recv_parse(Duration::from_secs(60), super::is_cancel, |s| {
+            if super::is_yes(s) { Ok(()) } else { Err("回复 y 确认、n 取消".to_string()) }
         })
         .await;
     match confirmed {
-        Some(true) => {}
-        Some(false) => {
+        Replied::Got(()) => {}
+        Replied::Cancelled => {
             reply.reply("行，不做了").await?;
             return Ok(());
         }
-        None => {
+        Replied::TimedOut => {
             reply.reply("没等到确认，先不做了").await?;
             return Ok(());
         }
@@ -414,31 +412,45 @@ async fn draw(reply: Reply, user: AUser, session: Session, args: ArgText) -> Han
 
 /// 在会话里等一条**坐标**(非法由 recv_parse 自动重问;取消/超时回 `None` 并告知)。
 async fn recv_coord(reply: &Reply, waiter: &Waiter) -> Result<Option<(i32, i32)>> {
-    let got = waiter
-        .recv_parse(Duration::from_secs(60), "取消", |txt| match parse_xy(txt) {
+    match waiter
+        .recv_parse(Duration::from_secs(60), super::is_cancel, |txt| match parse_xy(txt) {
             Some((x, y)) if in_bounds(x, y) => Ok((x, y)),
             Some(_) => Err("坐标超出范围（x 0-255，y 0-143），再发一次".to_string()),
             None => Err("坐标格式 x,y，例如 100,72，再发一次（或「取消」）".to_string()),
         })
-        .await;
-    if got.is_none() {
-        reply.reply("已取消").await?;
+        .await
+    {
+        Replied::Got(c) => Ok(Some(c)),
+        Replied::Cancelled => {
+            reply.reply("已取消").await?;
+            Ok(None)
+        }
+        Replied::TimedOut => {
+            reply.reply("等太久了，先不画了").await?;
+            Ok(None)
+        }
     }
-    Ok(got)
 }
 
 /// 在会话里等一个**颜色**(非法由 recv_parse 自动重问;取消/超时回 `None` 并告知)。
 async fn recv_color(reply: &Reply, waiter: &Waiter) -> Result<Option<u8>> {
-    let got = waiter
-        .recv_parse(Duration::from_secs(60), "取消", |txt| {
+    match waiter
+        .recv_parse(Duration::from_secs(60), super::is_cancel, |txt| {
             colors::parse_color(txt)
                 .ok_or_else(|| "没有这个颜色，回编号或名字（发「色板」看可选，或「取消」）".to_string())
         })
-        .await;
-    if got.is_none() {
-        reply.reply("已取消").await?;
+        .await
+    {
+        Replied::Got(c) => Ok(Some(c)),
+        Replied::Cancelled => {
+            reply.reply("已取消").await?;
+            Ok(None)
+        }
+        Replied::TimedOut => {
+            reply.reply("等太久了，先不画了").await?;
+            Ok(None)
+        }
     }
-    Ok(got)
 }
 
 /// 进区块 `n` 放大图 → 等坐标。
@@ -467,8 +479,8 @@ async fn pick_target_overview(reply: &Reply, db: &DatabaseConnection, waiter: &W
         Block(u8),
         Coord(i32, i32),
     }
-    let got = waiter
-        .recv_parse(Duration::from_secs(60), "取消", |txt| {
+    match waiter
+        .recv_parse(Duration::from_secs(60), super::is_cancel, |txt| {
             if let Some(n) = parse_block(txt) {
                 return Ok(Pick::Block(n));
             }
@@ -478,12 +490,16 @@ async fn pick_target_overview(reply: &Reply, db: &DatabaseConnection, waiter: &W
                 None => Err(format!("回区块号 #N（1-{}）或坐标 x,y，再发一次（或「取消」）", render::BLOCKS)),
             }
         })
-        .await;
-    match got {
-        Some(Pick::Block(n)) => pick_coord_in_block(reply, db, waiter, n).await,
-        Some(Pick::Coord(x, y)) => Ok(Some((x, y))),
-        None => {
+        .await
+    {
+        Replied::Got(Pick::Block(n)) => pick_coord_in_block(reply, db, waiter, n).await,
+        Replied::Got(Pick::Coord(x, y)) => Ok(Some((x, y))),
+        Replied::Cancelled => {
             reply.reply("已取消").await?;
+            Ok(None)
+        }
+        Replied::TimedOut => {
+            reply.reply("等太久了，先不画了").await?;
             Ok(None)
         }
     }

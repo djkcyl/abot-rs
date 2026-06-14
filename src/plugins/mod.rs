@@ -63,3 +63,21 @@ pub(crate) fn self_shown_name(user: &AUser, m: &MessageEvent) -> ShownName {
         ShownName { text: alias.to_string(), color: user.alias_color().to_string() }
     }
 }
+
+/// 取消词面统一判定:`n` / `no` / `否` / `不` / `取消` / `算了` / `退出` … 任一即视作取消。多处交互
+/// (y/n 确认、发图收尾、主题/坐标追问)共用,免得各写各的、词面覆盖不一。
+pub(crate) fn is_cancel(s: &str) -> bool {
+    matches!(
+        s.trim().to_lowercase().as_str(),
+        "n" | "no" | "否" | "不" | "不要" | "取消" | "算了" | "退出" | "cancel" | "quit"
+    )
+}
+
+/// 肯定词面:`y` / `yes` / `是` / `确认` / `好` / `行` … 任一即视作确认。与 [`is_cancel`] 互补,
+/// 喂 y/n 确认流(肯定→继续、取消→中止、其余→重问)。
+pub(crate) fn is_yes(s: &str) -> bool {
+    matches!(
+        s.trim().to_lowercase().as_str(),
+        "y" | "yes" | "是" | "确认" | "嗯" | "好" | "好的" | "行" | "可以" | "ok"
+    )
+}

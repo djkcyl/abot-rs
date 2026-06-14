@@ -150,42 +150,23 @@ async fn theme(reply: Reply, mut user: AUser, session: Session, args: Args<Theme
     }
 
     let waiter = session.waiter().from_starter().build();
-    let reply_ref = &reply;
-    // recv_with 对「取消」与超时都返 None;用标志位区分,中止回执把原因说清
-    // (原子量是因为异步闭包的 future 须 Send,Cell 不行)。
-    let cancelled = std::sync::atomic::AtomicBool::new(false);
-    let cancelled_ref = &cancelled;
+    // 非法自动重问（hint 由 parser 给）；取消（[`is_cancel`](super::is_cancel) 词面）与超时分开回执。
     let parsed = waiter
-        .recv_with(std::time::Duration::from_secs(60), |ctx| async move {
-            let Some(m) = ctx.message() else { return WaitFlow::Continue };
-            let text = m.content.extract_text();
-            let t = text.trim();
-            if t.is_empty() {
-                return WaitFlow::Continue;
-            }
-            if t == "取消" {
-                cancelled_ref.store(true, std::sync::atomic::Ordering::Relaxed);
-                return WaitFlow::Cancel;
-            }
-            match parse_line(t) {
-                Some(v) if !v.is_empty() => WaitFlow::Done(v),
-                _ => {
-                    let hint = format!("没这个颜色，可选：{}；亮暗：亮 / 暗 / 自动；回复「取消」退出", theme_names());
-                    if let Err(e) = reply_ref.reply(hint).await {
-                        tracing::warn!(error = %e, "主题交互追问发送失败");
-                    }
-                    WaitFlow::Continue
-                }
-            }
+        .recv_parse(std::time::Duration::from_secs(60), super::is_cancel, |t| match parse_line(t) {
+            Some(v) if !v.is_empty() => Ok(v),
+            _ => Err(format!("没这个颜色，可选：{}；亮暗：亮 / 暗 / 自动；回复「取消」退出", theme_names())),
         })
         .await;
-    let Some(settings) = parsed else {
-        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+    let settings = match parsed {
+        Replied::Got(v) => v,
+        Replied::Cancelled => {
             reply.reply("行，先不改了").await?;
-        } else {
-            reply.reply("等了一分钟没等到回复，先不改了").await?;
+            return Ok(());
         }
-        return Ok(());
+        Replied::TimedOut => {
+            reply.reply("等了一分钟没等到回复，先不改了").await?;
+            return Ok(());
+        }
     };
     let said = apply(&mut user, &settings).await?;
     send_palette(&reply, &user, "主题已更新", said).await?;

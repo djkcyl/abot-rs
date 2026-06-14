@@ -130,7 +130,7 @@ async fn throw(
             };
             let next_text = next.content.extract_text();
             let next_text = next_text.trim();
-            if next_text == "取消" {
+            if super::is_cancel(next_text) {
                 reply.reply("行，不丢了").await?;
                 return Ok(());
             }
@@ -196,22 +196,17 @@ async fn throw(
     );
     reply.reply(summary).await?;
     let confirmed = waiter
-        .recv_parse(std::time::Duration::from_secs(60), "取消", |s| {
-            let t = s.trim().to_lowercase();
-            match t.as_str() {
-                "y" | "yes" | "是" | "确认" | "嗯" | "丢" => Ok(true),
-                "n" | "no" | "否" | "不" | "算了" => Ok(false),
-                _ => Err("回复 y 确认、n 取消".to_string()),
-            }
+        .recv_parse(std::time::Duration::from_secs(60), super::is_cancel, |s| {
+            if super::is_yes(s) { Ok(()) } else { Err("回复 y 确认、n 取消".to_string()) }
         })
         .await;
     match confirmed {
-        Some(true) => {}
-        Some(false) => {
+        Replied::Got(()) => {}
+        Replied::Cancelled => {
             reply.reply("行，不丢了").await?;
             return Ok(());
         }
-        None => {
+        Replied::TimedOut => {
             reply.reply("等了一分钟没等到确认，先不丢了").await?;
             return Ok(());
         }
@@ -447,12 +442,18 @@ struct RemoveArgs {
     "漂流瓶评分",
     order = 5,
     description = "给捞到的瓶子打 1-5 分",
-    usage = "同一个瓶子可重复打分，新分覆盖旧分。"
+    usage = "对着捞到的瓶子（合并转发）回复「漂流瓶评分 分数」即可。可重复打分，新分覆盖旧分。"
 )]
-async fn rate(reply: Reply, user: AUser, args: Args<RateArgs>) -> HandlerResult {
+async fn rate(reply: Reply, user: AUser, m: MessageEvent, args: ArgText) -> HandlerResult {
     let db = user.db().clone();
-    let RateArgs { id, score } = args.0;
-
+    let Some(id) = replied_bottle_id(&db, &m).await.context("反查瓶子映射")? else {
+        reply.reply("对着捞到的瓶子（合并转发）回复「漂流瓶评分 分数」").await?;
+        return Ok(());
+    };
+    let Ok(score) = args.0.trim().parse::<i64>() else {
+        reply.reply("分数填 1 到 5 的数字").await?;
+        return Ok(());
+    };
     if !(1..=5).contains(&score) {
         reply.reply("评分要在 1 到 5 之间").await?;
         return Ok(());
@@ -469,23 +470,20 @@ async fn rate(reply: Reply, user: AUser, args: Args<RateArgs>) -> HandlerResult 
     Ok(())
 }
 
-/// `漂流瓶评分` 的参数：编号 + 分数。
-#[derive(Args)]
-struct RateArgs {
-    /// 瓶子编号。
-    #[arg(name = "编号", desc = "瓶子编号")]
-    id: i64,
-    /// 分数（1-5）。
-    #[arg(name = "分数", desc = "1 到 5")]
-    score: i64,
-}
-
 /// `漂流瓶评论` —— 给瓶子写评论（3-500 字，每人每瓶至多 3 条）。
-#[command("漂流瓶评论", order = 6, description = "给捞到的瓶子写一条评论", usage = "同一个瓶子每人最多评 3 条。")]
-async fn comment(reply: Reply, user: AUser, m: MessageEvent, args: Args<CommentArgs>) -> HandlerResult {
+#[command(
+    "漂流瓶评论",
+    order = 6,
+    description = "给捞到的瓶子写一条评论",
+    usage = "对着捞到的瓶子（合并转发）回复「漂流瓶评论 内容」即可。每人每瓶最多评 3 条。"
+)]
+async fn comment(reply: Reply, user: AUser, m: MessageEvent, args: ArgText) -> HandlerResult {
     let db = user.db().clone();
-    let CommentArgs { id, text } = args.0;
-    let text = text.trim().to_string();
+    let Some(id) = replied_bottle_id(&db, &m).await.context("反查瓶子映射")? else {
+        reply.reply("对着捞到的瓶子（合并转发）回复「漂流瓶评论 内容」").await?;
+        return Ok(());
+    };
+    let text = args.0.trim().to_string();
 
     let len = text.chars().count();
     if !(3..=500).contains(&len) {
@@ -508,17 +506,6 @@ async fn comment(reply: Reply, user: AUser, m: MessageEvent, args: Args<CommentA
         }
     }
     Ok(())
-}
-
-/// `漂流瓶评论` 的参数：编号 + 自由文本内容。
-#[derive(Args)]
-struct CommentArgs {
-    /// 瓶子编号。
-    #[arg(name = "编号", desc = "瓶子编号")]
-    id: i64,
-    /// 评论内容（自由文本，保真）。
-    #[arg(rest, raw, name = "内容", desc = "评论内容（3 到 500 字）")]
-    text: String,
 }
 
 /// `漂流瓶原文` / `取原文` —— 取出瓶子的原始文字与图片（合并转发，文字可复制、图片原样重发）。
@@ -546,24 +533,13 @@ async fn original(
     // 定瓶子编号：带编号直接用；否则从回复目标经映射反查（重启前/超期的映射已不在,引导走编号）。
     let id = match args.0.id {
         Some(id) => id,
-        None => {
-            let Some(target) = m.content.iter().find_map(|s| match s {
-                Segment::Reply { id, .. } => Some(id.clone()),
-                _ => None,
-            }) else {
+        None => match replied_bottle_id(&db, &m).await.context("反查瓶子映射")? {
+            Some(bid) => bid,
+            None => {
                 reply.reply("对着捞到的瓶子回复「取原文」，或发送「漂流瓶原文 编号」").await?;
                 return Ok(());
-            };
-            let bid = match msg_key(&target) {
-                Some(key) => logic::sent_bottle_id(&db, &key).await.context("反查瓶子映射")?,
-                None => None,
-            };
-            let Some(bid) = bid else {
-                reply.reply("不记得这条消息对应哪只瓶子了，试试「漂流瓶原文 编号」").await?;
-                return Ok(());
-            };
-            bid
-        }
+            }
+        },
     };
 
     // 可见性同 `查漂流瓶` 详情：本人/主人任意状态，他人仅已通过且未删；否则当作不存在。
@@ -579,7 +555,7 @@ async fn original(
         return Ok(());
     }
 
-    let forward = render::original_forward(&b, bot.self_id()).await;
+    let forward = render::original_forward(&db, &b, bot.self_id()).await;
     reply.send(&[forward]).await?;
     Ok(())
 }
@@ -590,6 +566,21 @@ struct OriginalArgs {
     /// 瓶子编号；缺则从回复目标反查。
     #[arg(name = "编号", desc = "瓶子编号；对着瓶子的合并转发回复时可不填")]
     id: Option<i64>,
+}
+
+/// 从消息的回复段反查它对着的瓶子编号（对着捞瓶/查瓶的合并转发回复时，经 `bottle_sent` 映射）。
+/// 非回复 / 映射不在（重启前或超期）→ `None`。
+async fn replied_bottle_id(db: &sea_orm::DatabaseConnection, m: &MessageEvent) -> anyhow::Result<Option<i64>> {
+    let Some(target) = m.content.iter().find_map(|s| match s {
+        Segment::Reply { id, .. } => Some(id.clone()),
+        _ => None,
+    }) else {
+        return Ok(None);
+    };
+    match msg_key(&target) {
+        Some(key) => logic::sent_bottle_id(db, &key).await,
+        None => Ok(None),
+    }
 }
 
 /// 列表单行：`#编号 时间 · 被捞 N(剩 M) · 评分 X · 状态 · 匿名`。`score` 为该瓶去极值均值（无则「无评分」）。

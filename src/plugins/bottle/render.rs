@@ -1,16 +1,18 @@
-//! 捞瓶 / 查瓶的合并转发呈现 —— **全图渲染**(render 排版引擎,统一 WebP):
-//! 首节点 = 瓶子卡片图(编号 / 评分·被捞·剩余 / 时间·来源 / 正文 / **原图内嵌**(圆角,动图
-//! 取首帧并打「动图」角标)/ 操作提示),整卡一张图;动图嵌卡只剩首帧,原样字节再紧跟卡片
-//! 发一段,聊天里照常会动;评论按页渲图(一页一节点),楼号跨页连续。「取原文」另走 [`original_forward`]:
-//! 原始文字 + 原图字节原样装节点,不过排版引擎。
+//! 捞瓶 / 查瓶的合并转发呈现:
+//! 卡片图一节点(编号 / 评分·被捞·剩余 / 时间·来源 / 投放者 / 正文,整卡一张图),瓶内原图各占一节点
+//! (原样字节,动图照常会动);评论按页渲图(一页一节点,楼号跨页连续)。投放者与评论者名
+//! 走自设昵称(带色,经 [`readable_hex`](crate::imaging::readable_hex) 收对比)、退快照名 / QQ 号;
+//! 匿名瓶署名 bot、隐来源。「取原文」另走 [`original_forward`](原始文字 + 原图字节,不过排版引擎)。
 //!
-//! 只读:评分均值走 [`logic::score_avg`]、评论走 [`logic::get_discuss`];原图按 md5 从本地
-//! 归档读字节重发(base64,QQ 的图片 URL 会过期),读不出放渐变占位图。匿名瓶子署名 bot、
-//! 隐来源群;非匿名署名投放者。任一渲染失败退回对应的文字形态,瓶子不至于看不了。
+//! 只读:评分均值走 [`logic::score_avg`]、评论走 [`logic::get_discuss`];原图按 md5 从本地归档读字节
+//! 重发(QQ 图床 URL 会过期),读不出放渐变占位图。任一渲染失败退回对应文字形态。
+
+use std::collections::HashMap;
 
 use nagisa::prelude::*;
-use sea_orm::DatabaseConnection;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 
+use crate::data::entity::user;
 use crate::imaging::UserTheme;
 
 use super::entity::{bottle, discuss};
@@ -31,7 +33,7 @@ fn render_opts(t: &UserTheme) -> nagisa::render::RenderOptions {
 
 /// 把一只瓶子渲染成合并转发。
 ///
-/// 节点构成:瓶子卡片图 + 原图(首节点)、评论图按页各一节点。`self_id` 用作匿名瓶子
+/// 节点构成:卡片图一节点、瓶内原图各占一节点、评论图按页各一节点。`self_id` 用作匿名瓶子
 /// 与评论节点的署名。
 pub async fn bottle_forward(
     db: &DatabaseConnection,
@@ -42,41 +44,44 @@ pub async fn bottle_forward(
     let score = logic::score_avg(db, b.id).await?;
     let comments = logic::get_discuss(db, b.id).await?;
 
-    let (sender, sender_name) = sender_of(b, self_id);
+    // 投放者 + 评论者的自设昵称(实时查,出图带色用;匿名瓶不显投放者)。
+    let mut uins: Vec<i64> = comments.iter().map(|c| c.uin).collect();
+    uins.push(b.uin);
+    uins.sort_unstable();
+    uins.dedup();
+    let aliases = fetch_aliases(db, &uins).await;
 
-    // —— 首节点:整卡渲染(卡片信息 + 全部原图进同一张图,动图取首帧打「动图」角标);
-    //    动图原样字节再紧跟卡片发段(嵌卡的只剩首帧,聊天里这段才会动)。
-    //    卡渲不出退「文字卡片 + 原图逐段」(动图已在其中,不再补发)。——
+    // 投放者:匿名署名 bot;否则取自设昵称(带色)/ 快照名,作节点署名与卡内「投放者」行。
+    let (node_sender, node_name, poster) = if b.anonymous {
+        (self_id, "匿名漂流瓶".to_string(), None)
+    } else {
+        let (name, color) = name_with_color(aliases.get(&b.uin), b.nickname.as_deref(), b.uin);
+        (Uin(b.uin), name.clone(), Some((name, color)))
+    };
+
+    // —— 卡片图各占一节点(信息 + 正文,不含瓶内图片;卡渲不出退文字卡片);瓶内每张原图再各占一节点
+    //    (各自一条消息,动图自然会动)。——
     let images = load_bottle_images(&b.images).await;
-    let mut content = Vec::new();
-    match card_image(b, score, &images, t) {
-        Ok(webp) => {
-            content.push(Segment::image_bytes(webp));
-            for img in &images {
-                if img.animated
-                    && let Some(bytes) = &img.bytes
-                {
-                    content.push(Segment::image_bytes(bytes.clone()));
-                }
-            }
-        }
+    let mut nodes = Vec::new();
+    match card_image(b, score, poster.as_ref().map(|(n, c)| (n.as_str(), c.as_str())), t) {
+        Ok(webp) => nodes.push(ForwardNode::new(node_sender, node_name.clone(), vec![Segment::image_bytes(webp)])),
         Err(e) => {
-            tracing::warn!(error = %e, "渲染瓶子卡片失败,退回文字 + 原图段");
-            content.push(Segment::text(card_text(b, score)));
-            for img in &images {
-                match &img.bytes {
-                    Some(bytes) => content.push(Segment::image_bytes(bytes.clone())),
-                    None => content.push(Segment::text(MISSING_IMAGE_TEXT)),
-                }
-            }
+            tracing::warn!(error = %e, "渲染瓶子卡片失败,退回文字卡片");
+            nodes.push(ForwardNode::text(node_sender, node_name.clone(), card_text(b, score)));
         }
     }
-    let mut nodes = vec![ForwardNode::new(sender, sender_name, content)];
+    for img in &images {
+        let seg = match &img.bytes {
+            Some(bytes) => Segment::image_bytes(bytes.clone()),
+            None => Segment::text(MISSING_IMAGE_TEXT),
+        };
+        nodes.push(ForwardNode::new(node_sender, node_name.clone(), vec![seg]));
+    }
 
     // —— 评论:按渲染高度装箱分页(每页楼数动态),每页一图一节点,楼号跨页连续;
     //    量高失败退固定楼数分页,某页渲染失败该页退文字楼层。——
     let total = comments.len();
-    let spans = paginate_comments(&comments, t).unwrap_or_else(|e| {
+    let spans = paginate_comments(&comments, t, &aliases).unwrap_or_else(|e| {
         tracing::warn!(error = %e, "评论量高分页失败,退回固定每页楼数");
         let mut spans = Vec::new();
         let mut s = 0;
@@ -91,7 +96,7 @@ pub async fn bottle_forward(
     for (pi, &(s, e)) in spans.iter().enumerate() {
         let chunk = &comments[s..e];
         let node_name = if pages > 1 { format!("评论 {}/{pages}", pi + 1) } else { "评论".to_string() };
-        match comments_image(chunk, s, total, pi + 1, pages, t) {
+        match comments_image(chunk, s, total, pi + 1, pages, t, &aliases) {
             Ok(webp) => {
                 nodes.push(ForwardNode::new(self_id, node_name, vec![Segment::image_bytes(webp)]));
             }
@@ -117,11 +122,58 @@ pub(super) fn local_time(t: &sea_orm::prelude::DateTimeWithTimeZone) -> chrono::
     t.with_timezone(&chrono::Local)
 }
 
+/// 批量查一组 uin 的自设昵称 + 颜色(`alias` / `alias_color`)。查不到的 uin 不入表(由调用方退快照名)。
+async fn fetch_aliases(db: &DatabaseConnection, uins: &[i64]) -> HashMap<i64, (String, String)> {
+    let mut map = HashMap::new();
+    if uins.is_empty() {
+        return map;
+    }
+    match user::Entity::find()
+        .select_only()
+        .column(user::Column::Uin)
+        .column(user::Column::Alias)
+        .column(user::Column::AliasColor)
+        .filter(user::Column::Uin.is_in(uins.iter().copied()))
+        .into_tuple::<(i64, String, String)>()
+        .all(db)
+        .await
+    {
+        Ok(rows) => {
+            for (u, alias, color) in rows {
+                map.insert(u, (alias, color));
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "查投放者/评论者自设昵称失败"),
+    }
+    map
+}
+
+/// 出图显示名 + 颜色:有自设昵称用它(带其颜色),否则用投放/评论时的快照名(无色),再否则 QQ 号。
+/// 颜色为空串即出图用缺省文字色([`readable_hex`](crate::imaging::readable_hex) 对空串返 `None`)。
+fn name_with_color(alias: Option<&(String, String)>, snapshot: Option<&str>, uin: i64) -> (String, String) {
+    if let Some((a, c)) = alias
+        && !a.trim().is_empty()
+    {
+        return (a.clone(), c.clone());
+    }
+    match snapshot.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => (s.to_string(), String::new()),
+        None => (uin.to_string(), String::new()),
+    }
+}
+
 /// 把一只瓶子的**原始内容**装成合并转发(「取原文」用):首节点为内容说明(几字几图,
 /// 纯图瓶子不至于像「丢了文字」),原文为可复制的文本段、原图为本地归档字节,各占一个
-/// 节点,不走排版引擎。署名规则同 [`bottle_forward`](匿名署 bot、否则署投放者)。
-pub async fn original_forward(b: &bottle::Model, self_id: Uin) -> Segment {
-    let (sender, sender_name) = sender_of(b, self_id);
+/// 节点,不走排版引擎。署名同 [`bottle_forward`]:匿名署 bot,否则用投放者自设昵称(退快照名 /
+/// QQ 号);节点头 QQ 不给上色,故只取名不带色。
+pub async fn original_forward(db: &DatabaseConnection, b: &bottle::Model, self_id: Uin) -> Segment {
+    let (sender, sender_name) = if b.anonymous {
+        (self_id, "匿名漂流瓶".to_string())
+    } else {
+        let aliases = fetch_aliases(db, &[b.uin]).await;
+        let (name, _) = name_with_color(aliases.get(&b.uin), b.nickname.as_deref(), b.uin);
+        (Uin(b.uin), name)
+    };
     let text = b.text.as_deref().filter(|t| !t.trim().is_empty());
     let images = load_bottle_images(&b.images).await;
 
@@ -151,46 +203,30 @@ pub async fn original_forward(b: &bottle::Model, self_id: Uin) -> Segment {
     Segment::Forward(Forward::nodes(nodes).title(format!("漂流瓶 #{} 原内容", b.id)))
 }
 
-/// 瓶子署名:匿名 → 署名 bot、名「匿名漂流瓶」;非匿名 → 署名投放者 uin + 显示名(缺则 QQ 号)。
-fn sender_of(b: &bottle::Model, self_id: Uin) -> (Uin, String) {
-    if b.anonymous {
-        (self_id, "匿名漂流瓶".to_string())
-    } else {
-        let name = b.nickname.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| b.uin.to_string());
-        (Uin(b.uin), name)
-    }
-}
-
-/// 已读出的一张瓶子图:字节 + 是否动图。
+/// 已读出的一张瓶子图。
 pub struct BottleImage {
     /// 图片字节;失效且占位图也渲不出(理论不至)为 `None`,由调用方落成文字提示。
     pub bytes: Option<Vec<u8>>,
-    /// 是否动图(决定嵌卡打「动图」角标 + 卡后原样补发);占位图恒为静图。
-    pub animated: bool,
 }
 
-/// 按 md5 从本地归档逐张读瓶子原图字节(发 base64 / 嵌渲染都用字节:不依赖协议端可读
-/// bot 的盘,也没有无后缀路径的兼容问题)。读不出(被清理/盘损)不静默吞图:换渐变占位图
-/// 字节,让看的人知道这里本来有张图。动图标志优先读库(入库时已嗅探),读不到再按字节现嗅。
+/// 按 md5 从本地归档逐张读瓶子原图字节(发 base64 都用字节:不依赖协议端可读 bot 的盘,
+/// 也没有无后缀路径的兼容问题)。读不出(被清理/盘损)不静默吞图:换渐变占位图字节,让看的人
+/// 知道这里本来有张图。
 async fn load_bottle_images(images: &serde_json::Value) -> Vec<BottleImage> {
     let mut out = Vec::new();
     for md5 in image_names(images) {
         match tokio::fs::read(crate::media::resolve(&md5)).await {
             Ok(bytes) => {
-                let animated = match crate::media::animated_flag(&md5).await {
-                    Some(v) => v,
-                    None => crate::media::is_animated_image(&bytes),
-                };
-                out.push(BottleImage { bytes: Some(bytes), animated });
+                out.push(BottleImage { bytes: Some(bytes) });
                 tokio::spawn(crate::media::touch_used(md5)); // 重发即「使用」,刷 last_used
             }
             Err(e) => {
                 tracing::warn!(%md5, error = %e, "读漂流瓶图片失败,换占位图");
                 match crate::media::placeholder::missing_image_webp(&md5) {
-                    Ok(webp) => out.push(BottleImage { bytes: Some(webp), animated: false }),
+                    Ok(webp) => out.push(BottleImage { bytes: Some(webp) }),
                     Err(pe) => {
                         tracing::warn!(error = %pe, "渲染占位图失败,该位退文字");
-                        out.push(BottleImage { bytes: None, animated: false });
+                        out.push(BottleImage { bytes: None });
                     }
                 }
             }
@@ -199,12 +235,13 @@ async fn load_bottle_images(images: &serde_json::Value) -> Vec<BottleImage> {
     out
 }
 
-/// 瓶子卡片图:编号(+匿名标)/ 评分·被捞·剩余 / 时间·来源 / 正文 / 原图内嵌(圆角居中,
-/// 动图取首帧并打「动图」角标)/ 操作提示。`images` 为已读出的原图([`BottleImage`])。
+/// 瓶子卡片图:编号(+匿名标)/ 评分·被捞·剩余 / 时间·来源 / 投放者(自设昵称带色)/ 正文 /
+/// 操作提示。瓶内原图不进卡片,由 [`bottle_forward`] 原样发进合并转发。`poster` 为非匿名瓶的
+/// 投放者(显示名, 颜色),匿名为 `None`。
 pub fn card_image(
     b: &bottle::Model,
     score: Option<f64>,
-    images: &[BottleImage],
+    poster: Option<(&str, &str)>,
     t: &UserTheme,
 ) -> anyhow::Result<Vec<u8>> {
     use nagisa::render::{Align, Doc, render_document};
@@ -245,6 +282,27 @@ pub fn card_image(
         });
     });
 
+    // 投放者(非匿名):自设昵称带色,退快照名 / QQ 号则缺省色。
+    if let Some((name, color)) = poster {
+        let col = crate::imaging::readable_hex(color, t.dark);
+        d.paragraph(|p| {
+            p.styled("投放者 ", |s| {
+                s.color(&pal.muted).size(0.92);
+            });
+            p.styled(name, |s| {
+                s.size(0.92);
+                match &col {
+                    Some(c) => {
+                        s.color(c);
+                    }
+                    None => {
+                        s.color(&pal.muted);
+                    }
+                }
+            });
+        });
+    }
+
     // 正文(若有):逐行成段,空行跳过(段距本身就是分隔)。
     if let Some(text) = b.text.as_deref().filter(|t| !t.trim().is_empty()) {
         d.divider();
@@ -255,48 +313,21 @@ pub fn card_image(
         }
     }
 
-    // 原图(若有)内嵌进卡片:圆角居中 + 图注(多图带序号),动图取首帧打「动图」角标,
-    // 整卡一张图。失效且占位图也渲不出的那位落文字提示。
-    if !images.is_empty() {
-        d.divider();
-        let total = images.len();
-        for (i, img) in images.iter().enumerate() {
-            let caption =
-                if total > 1 { format!("瓶中图片 {}/{total}", i + 1) } else { "瓶中图片".to_string() };
-            match &img.bytes {
-                Some(bytes) => {
-                    d.image_bytes(bytes.clone(), |im| {
-                        im.align(Align::Center).rounded(12.0).caption(caption);
-                        if img.animated {
-                            im.badge("动图", |_| {});
-                        }
-                    });
-                }
-                None => {
-                    d.paragraph(|p| {
-                        p.align(Align::Center).styled(MISSING_IMAGE_TEXT, |s| {
-                            s.color(&pal.muted).size(0.85);
-                        });
-                    });
-                }
-            }
-        }
-    }
-
-    // 操作提示脚注:两行各自居中(一长行折行会参差,底部观感就歪了)。
+    // 操作提示脚注:两行各自居中(一长行折行会参差,底部观感就歪了)。评分/评论/取原文一律对着本条
+    // 转发回复,编号从回复反查。
     d.divider();
     d.paragraph(|p| {
+        p.align(Align::Center).styled("对着本条转发回复即可:", |s| {
+            s.color(&pal.muted).size(0.8);
+        });
+    });
+    d.paragraph(|p| {
         p.align(Align::Center).styled(
-            format!("评分:发送「漂流瓶评分 {0} 分数」    评论:发送「漂流瓶评论 {0} 内容」", b.id),
+            "「漂流瓶评分 分数」 · 「漂流瓶评论 内容」 · 「取原文」",
             |s| {
                 s.color(&pal.muted).size(0.8);
             },
         );
-    });
-    d.paragraph(|p| {
-        p.align(Align::Center).styled("取原文:对着本条转发回复「取原文」", |s| {
-            s.color(&pal.muted).size(0.8);
-        });
     });
 
     Ok(render_document(&d.build(), &render_opts(t))?)
@@ -330,8 +361,8 @@ fn card_text(b: &bottle::Model, score: Option<f64>) -> String {
 }
 
 /// 构建一页评论的文档(量高与真渲共用):标题「评论 N 条(·第 i/k 页)」+ 每楼
-/// 「楼号 名字 · 时间」+ 内容,楼层间分割线。`offset` 为本页首楼在全部评论里的下标
-/// (楼号跨页连续)。
+/// 「楼号 名字 · 时间」+ 内容,楼层间分割线。评论者名走自设昵称(带色)/ 快照名。`offset`
+/// 为本页首楼在全部评论里的下标(楼号跨页连续)。
 fn comments_doc(
     chunk: &[discuss::Model],
     offset: usize,
@@ -339,6 +370,7 @@ fn comments_doc(
     page: usize,
     pages: usize,
     t: &UserTheme,
+    aliases: &HashMap<i64, (String, String)>,
 ) -> nagisa::render::Document {
     use nagisa::render::Doc;
 
@@ -357,11 +389,27 @@ fn comments_doc(
             d.divider();
         }
         let when = local_time(&c.created_at).format("%m-%d %H:%M").to_string();
+        let (cname, ccolor) = name_with_color(aliases.get(&c.uin), c.nickname.as_deref(), c.uin);
+        let ccol = crate::imaging::readable_hex(&ccolor, t.dark);
         d.paragraph(|p| {
             p.styled(format!("{} 楼", offset + j + 1), |s| {
                 s.bold().size(0.85).color(&pal.primary);
             });
-            p.styled(format!("  {} · {when}", commenter(c)), |s| {
+            p.styled("  ", |s| {
+                s.color(&pal.muted).size(0.85);
+            });
+            p.styled(cname, |s| {
+                s.size(0.85);
+                match &ccol {
+                    Some(col) => {
+                        s.color(col);
+                    }
+                    None => {
+                        s.color(&pal.muted);
+                    }
+                }
+            });
+            p.styled(format!(" · {when}"), |s| {
                 s.color(&pal.muted).size(0.85);
             });
         });
@@ -380,15 +428,20 @@ pub fn comments_image(
     page: usize,
     pages: usize,
     t: &UserTheme,
+    aliases: &HashMap<i64, (String, String)>,
 ) -> anyhow::Result<Vec<u8>> {
     use nagisa::render::render_document;
-    Ok(render_document(&comments_doc(chunk, offset, total, page, pages, t), &render_opts(t))?)
+    Ok(render_document(&comments_doc(chunk, offset, total, page, pages, t, aliases), &render_opts(t))?)
 }
 
 /// 评论按渲染高度装箱分页:逐楼试加、量高([`nagisa::render::measure_document`],只排版
 /// 不绘制),超过 `COMMENTS_PAGE_MAX_PX` 就在上一楼收页。每页至少一楼(单楼超高独占
 /// 一页)。返回各页在 `comments` 里的 `(起, 止)` 下标(止开区间)。
-pub fn paginate_comments(comments: &[discuss::Model], t: &UserTheme) -> anyhow::Result<Vec<(usize, usize)>> {
+pub fn paginate_comments(
+    comments: &[discuss::Model],
+    t: &UserTheme,
+    aliases: &HashMap<i64, (String, String)>,
+) -> anyhow::Result<Vec<(usize, usize)>> {
     use nagisa::render::measure_document;
 
     let opts = render_opts(t);
@@ -401,7 +454,7 @@ pub fn paginate_comments(comments: &[discuss::Model], t: &UserTheme) -> anyhow::
         // (页标会让标题行多一小段,量高时按多页形态算,高度不受页码数字影响。)
         let mut cut = start + 1;
         while cut < n {
-            let doc = comments_doc(&comments[start..=cut], start, total, 1, 2, t);
+            let doc = comments_doc(&comments[start..=cut], start, total, 1, 2, t, aliases);
             let (_, h) = measure_document(&doc, &opts)?;
             if h > COMMENTS_PAGE_MAX_PX {
                 break;
@@ -462,7 +515,7 @@ pub fn status_text(status: &str) -> &'static str {
     }
 }
 
-/// 评论者显示名:昵称非空用昵称,否则 QQ 号。
+/// 评论者文字退路显示名(渲染失败的文字楼层用):快照名非空用它,否则 QQ 号。
 fn commenter(c: &discuss::Model) -> String {
     c.nickname.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| c.uin.to_string())
 }
