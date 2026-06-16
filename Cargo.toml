@@ -8,7 +8,9 @@ description = "用 nagisa 搭的多插件 QQ 机器人"
 
 [dependencies]
 anyhow = "1.0.102"
+ar-reshaper = "1.5.0"
 arc-swap = "1.9.1"
+async-trait = "0.1.89"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22.1"
 bytes = "1.11.1"
@@ -30,10 +32,11 @@ sea-orm-migration = { version = "1.1.20", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.150"
 sha2 = "0.11.0"
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "sync"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "io-util", "time"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tract-onnx = "0.23.1"
+unicode-bidi = "0.3.18"
 
 # 开发期:把 nagisa 指到本地工作树以联调框架改动。发布/合并前撤回本段并改回 crates.io 版。
 [patch.crates-io]

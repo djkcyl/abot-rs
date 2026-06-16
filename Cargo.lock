@@ -7,7 +7,9 @@ name = "abot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ar-reshaper",
  "arc-swap",
+ "async-trait",
  "axum",
  "base64",
  "bytes",
@@ -33,6 +35,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tract-onnx",
+ "unicode-bidi",
 ]
 
 [[package]]
@@ -93,6 +96,12 @@ name = "anymap3"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "170433209e817da6aae2c51aa0dd443009a613425dd041ebfb2492d1c4c11a25"
+
+[[package]]
+name = "ar-reshaper"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08dae85b57b725df143d5a2eb92c032dd032f062a636826fda1e1a4b21c40c03"
 
 [[package]]
 name = "arc-swap"
