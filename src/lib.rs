@@ -9,7 +9,6 @@ pub mod config;
 pub mod data;
 pub mod fonts;
 pub mod imaging;
-pub mod media;
-pub mod moderation;
+pub mod integrations;
 pub mod plugins;
 pub mod web;

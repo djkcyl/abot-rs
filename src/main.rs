@@ -63,8 +63,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 顶层图片缓存服务:建目录、拉起下载队列、重排残留 pending。
-    // 插件经 abot::media(scan/ingest/wait/resolve)用图,自己不下载。
-    abot::media::init(db.clone()).await?;
+    // 插件经 abot::integrations::media(scan/ingest/wait/resolve)用图,自己不下载。
+    abot::integrations::media::init(db.clone()).await?;
 
     // 渲染器预热:字体栈构建(zstd 解压 + 字体库扫描)与首次整形/栅格的开销在启动时一次
     // 付清,不让第一个出图命令多等一秒。纯 CPU 活,放 blocking 线程跑;失败即启动失败

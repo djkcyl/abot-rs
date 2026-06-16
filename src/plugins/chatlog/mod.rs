@@ -3,7 +3,7 @@
 //! 「插件自有数据」约定的样板(与签到一致)：
 //! - [`entity`] 定义本插件私有的 `chat_log` 表；[`migration`] 建表 + 索引，经 `PluginMigration`
 //!   + `nagisa::inventory` **自注册**接入核心 `Migrator`(核心不感知本插件)；
-//! - 图片归档走顶层媒体服务([`crate::media`]):本记录器是它的入口——每条消息里的图
+//! - 图片归档走顶层媒体服务([`crate::integrations::media`]):本记录器是它的入口——每条消息里的图
 //!   登记 + 排队下载,detached 跑、绝不阻塞;别的插件经 `media::wait` 等图就绪。
 //!
 //! 发言数**不**进核心 `user` 表(那是游戏币热行)：归本插件,放去规范化计数表 [`entity::chat_stat`]
@@ -85,9 +85,9 @@ async fn record(m: MessageEvent, Db(db): Db) -> HandlerResult {
     }
 
     // 图片归档：登记 + 排队交给顶层媒体服务,detached、绝不阻塞消息处理。
-    let refs = crate::media::scan(&m.content);
+    let refs = crate::integrations::media::scan(&m.content);
     if !refs.is_empty() {
-        tokio::spawn(crate::media::ingest(refs));
+        tokio::spawn(crate::integrations::media::ingest(refs));
     }
     Ok(())
 }

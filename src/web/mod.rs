@@ -188,16 +188,16 @@ async fn serve_media(Path(name): Path<String>, Query(q): Query<MediaQuery>) -> i
         return StatusCode::NOT_FOUND.into_response();
     }
     // 路径解析交给顶层媒体服务:文件名 → 分片归档路径。
-    let path = crate::media::resolve(&name);
+    let path = crate::integrations::media::resolve(&name);
     let Ok(bytes) = tokio::fs::read(&path).await else {
-        return match crate::media::placeholder::missing_image_webp(&name) {
+        return match crate::integrations::media::placeholder::missing_image_webp(&name) {
             Ok(webp) => ([(header::CONTENT_TYPE, "image/webp")], webp).into_response(),
             Err(_) => StatusCode::NOT_FOUND.into_response(),
         };
     };
     // 盘上文件无后缀(内容寻址),Content-Type 按字节魔数嗅探,认不出回 octet-stream。
-    let ct = crate::media::sniff_image_ct(&bytes).unwrap_or("application/octet-stream");
-    tokio::spawn(crate::media::touch_used(name)); // 取图即「使用」,刷 last_used
+    let ct = crate::integrations::media::sniff_image_ct(&bytes).unwrap_or("application/octet-stream");
+    tokio::spawn(crate::integrations::media::touch_used(name)); // 取图即「使用」,刷 last_used
     ([(header::CONTENT_TYPE, ct)], bytes).into_response()
 }
 

@@ -215,14 +215,14 @@ pub struct BottleImage {
 async fn load_bottle_images(images: &serde_json::Value) -> Vec<BottleImage> {
     let mut out = Vec::new();
     for md5 in image_names(images) {
-        match tokio::fs::read(crate::media::resolve(&md5)).await {
+        match tokio::fs::read(crate::integrations::media::resolve(&md5)).await {
             Ok(bytes) => {
                 out.push(BottleImage { bytes: Some(bytes) });
-                tokio::spawn(crate::media::touch_used(md5)); // 重发即「使用」,刷 last_used
+                tokio::spawn(crate::integrations::media::touch_used(md5)); // 重发即「使用」,刷 last_used
             }
             Err(e) => {
                 tracing::warn!(%md5, error = %e, "读漂流瓶图片失败,换占位图");
-                match crate::media::placeholder::missing_image_webp(&md5) {
+                match crate::integrations::media::placeholder::missing_image_webp(&md5) {
                     Ok(webp) => out.push(BottleImage { bytes: Some(webp) }),
                     Err(pe) => {
                         tracing::warn!(error = %pe, "渲染占位图失败,该位退文字");

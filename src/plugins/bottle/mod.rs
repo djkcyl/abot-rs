@@ -18,7 +18,7 @@ use serde_json::json;
 
 use crate::config::Master;
 use crate::data::AUser;
-use crate::moderation::ContentModerator;
+use crate::integrations::moderation::ContentModerator;
 use logic::{DeleteOutcome, DiscussOutcome, NewBottle};
 
 plugin! {
