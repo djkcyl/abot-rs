@@ -1,29 +1,25 @@
-//! MC 服务器查询插件 —— 把 [`minecraft`](crate::integrations::minecraft) 集成接到聊天里。
+//! MC 服务器查询插件 —— 把 [`minecraft`] 集成接到聊天里。
 //!
 //! 一条命令 `mcping <地址> [--je|--be] [--full]`:默认先按 Java 版(SLP/TCP)查,连不上再自动换基岩版
-//! (RakNet/UDP);带 `--je` / `--be` 旗标(框架 [`Args`] 解析)则锁定版本、不再嗅探。
+//! (RakNet/UDP);带 `--je` / `--be` 旗标(框架 `Args` 解析)则锁定版本、不再嗅探。
 //!
 //! 两种出图样式:
 //! - 默认 **列表样式**:原版 1.16.5「Play Multiplayer」整屏复刻(暗泥土 + 标题 + 选中条目 + LAN 扫描提示 +
-//!   页脚按钮,16:9,见 [`render_select_server_png`]),条目走 vanilla 列表口径(名字 + 两行 MOTD + 信号格 + 人数)。
-//! - `--full` **完整数据样式**:本仓的服务器信息卡([`render_server_card_png`]),图标 + 5 行(含延迟 /
+//!   页脚按钮,16:9,见 `render_select_server_png`),条目走 vanilla 列表口径(名字 + 两行 MOTD + 信号格 + 人数)。
+//! - `--full` **完整数据样式**:本仓的服务器信息卡(`render_server_card_png`),图标 + 5 行(含延迟 /
 //!   版本 / 模组 / Via 等)+ 右侧玩家 sample 悬浮窗,信息量大。
 //!
 //! 基岩经 [`to_ping_result`](minecraft::bedrock::to_ping_result) 折算后两样式通用。出图本不该失败,
 //! 真失败即说明有 bug,直接当内部错误抛,不退文字。
 //!
-//! 群内还可维护一份**服务器清单**(`mc_server` 表,见 [`entity`]/[`migration`]):`mcadd` 加、`mcdel`
+//! 群内还可维护一份**服务器清单**(`mc_server` 表,见 `entity`/`migration`):`mcadd` 加、`mcdel`
 //! 删、`mclist` 把全清单并发批量 ping 后出一张多条目长图(放不下就拉高)。
 
 use nagisa::prelude::*;
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
-};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
 
 use crate::data::{AUser, Db};
-use crate::integrations::minecraft::{
-    self, BedrockOptions, CardOptions, PingError, PingResult, ScreenOptions,
-};
+use crate::integrations::minecraft::{self, BedrockOptions, CardOptions, PingError, PingResult, ScreenOptions};
 use entity::server;
 
 mod entity;
@@ -120,9 +116,7 @@ async fn fetch(addr: &str, edition: Option<Edition>) -> std::result::Result<Ping
         Some(Edition::Bedrock) => bedrock(addr).await.map_err(|e| ping_failure(addr, &e)),
         None => match minecraft::ping(addr).await {
             Ok(r) => Ok(r),
-            Err(_) => bedrock(addr)
-                .await
-                .map_err(|_| format!("连不上 {addr}，Java / 基岩版都没响应")),
+            Err(_) => bedrock(addr).await.map_err(|_| format!("连不上 {addr}，Java / 基岩版都没响应")),
         },
     }
 }
@@ -156,7 +150,10 @@ fn is_operator(m: &MessageEvent) -> bool {
 }
 
 /// 取本群清单(按添加序)。DB 错转 [`nagisa::Error`] 上抛(dispatch 记 warn)。
-async fn load_servers(db: &DatabaseConnection, group_id: i64) -> std::result::Result<Vec<server::Model>, nagisa::Error> {
+async fn load_servers(
+    db: &DatabaseConnection,
+    group_id: i64,
+) -> std::result::Result<Vec<server::Model>, nagisa::Error> {
     server::Entity::find()
         .filter(server::Column::GroupId.eq(group_id))
         .order_by_asc(server::Column::Id)
@@ -255,10 +252,7 @@ async fn mc_del(reply: Reply, m: MessageEvent, Db(db): Db, args: ArgText) -> Han
         return Ok(());
     };
     let (name, addr) = (m.name.clone(), m.address.clone());
-    server::Entity::delete_by_id(m.id)
-        .exec(&db)
-        .await
-        .map_err(|e| nagisa::Error::action(format!("删除失败: {e}")))?;
+    server::Entity::delete_by_id(m.id).exec(&db).await.map_err(|e| nagisa::Error::action(format!("删除失败: {e}")))?;
     reply.reply(format!("已删除「{name}」（{addr}）")).await?;
     Ok(())
 }

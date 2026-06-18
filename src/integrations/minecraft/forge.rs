@@ -73,11 +73,7 @@ fn parse_buf(bytes: &[u8]) -> Option<ForgeMods> {
 
 /// 读一个频道 version:VarInt(新版)或 UTF 串(旧版)。
 fn read_chan_version(r: &mut codec::Reader, varint: bool) -> std::io::Result<()> {
-    if varint {
-        r.read_varint().map(|_| ())
-    } else {
-        r.read_string(32767).map(|_| ())
-    }
+    if varint { r.read_varint().map(|_| ()) } else { r.read_string(32767).map(|_| ()) }
 }
 
 /// 按指定的频道 version 类型解析一遍;返回 (结果, `full`=有没有干净地读到缓冲末尾)。

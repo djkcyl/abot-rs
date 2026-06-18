@@ -16,8 +16,7 @@ pub async fn resolve_srv(host: &str, query_timeout: Duration) -> Option<(String,
     let qname = format!("_minecraft._tcp.{host}");
     let query = build_query(&qname);
 
-    let bind: SocketAddr =
-        if server.is_ipv6() { "[::]:0".parse().ok()? } else { "0.0.0.0:0".parse().ok()? };
+    let bind: SocketAddr = if server.is_ipv6() { "[::]:0".parse().ok()? } else { "0.0.0.0:0".parse().ok()? };
     let sock = UdpSocket::bind(bind).await.ok()?;
     sock.connect(SocketAddr::new(server, 53)).await.ok()?;
     sock.send(&query).await.ok()?;

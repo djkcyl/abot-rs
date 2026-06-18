@@ -38,14 +38,12 @@ pub mod versions;
 pub use bedrock::{BedrockOptions, BedrockResult, BedrockStatus, ping_bedrock};
 pub use component::{Component, ResolvedStyle, Span};
 pub use protocol::{
-    PingError, PingOptions, PingResult, ResolvedAddress, ping, ping_as, ping_resolved, ping_sync,
-    ping_with,
+    PingError, PingOptions, PingResult, ResolvedAddress, ping, ping_as, ping_resolved, ping_sync, ping_with,
 };
 pub use render::{
-    CardOptions, ListEntry, OldColorPolicy, RenderOptions, ScreenOptions, TargetVersion,
-    render_motd, render_motd_png, render_select_server_png, render_select_server_screen,
-    render_server_card, render_server_card_png, render_server_list_png, render_server_list_screen,
-    visual_lines,
+    CardOptions, ListEntry, OldColorPolicy, RenderOptions, ScreenOptions, TargetVersion, render_motd, render_motd_png,
+    render_select_server_png, render_select_server_screen, render_server_card, render_server_card_png,
+    render_server_list_png, render_server_list_screen, visual_lines,
 };
 pub use status::{Player, Players, StatusResponse, Version};
 

@@ -375,10 +375,7 @@ fn verify_pong(frame: &[u8]) -> Result<Option<String>, PingError> {
     Ok(nyf)
 }
 
-async fn read_frame_async(
-    s: &mut TokioStream,
-    max: usize,
-) -> Result<Vec<u8>, PingError> {
+async fn read_frame_async(s: &mut TokioStream, max: usize) -> Result<Vec<u8>, PingError> {
     let len = read_varint_async(s).await?;
     let len = usize::try_from(len).map_err(|_| PingError::Protocol("帧长为负".into()))?;
     if len == 0 || len > max {
@@ -445,12 +442,7 @@ fn parse_address(addr: &str) -> Result<(String, u16, bool), PingError> {
 
 /// 异步路径的目标解析:符合条件就查 SRV,命中则整体重定向并把 target 填进握手地址。
 /// 返回 `(连接 host, 连接 port, 握手 host, 是否走了 SRV)`。
-async fn resolve_target(
-    host: &str,
-    explicit_port: bool,
-    port: u16,
-    opts: &PingOptions,
-) -> (String, u16, String, bool) {
+async fn resolve_target(host: &str, explicit_port: bool, port: u16, opts: &PingOptions) -> (String, u16, String, bool) {
     if opts.use_srv
         && !explicit_port
         && host.parse::<IpAddr>().is_err()

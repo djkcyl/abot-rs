@@ -50,7 +50,9 @@ fn main() {
 
     // Vanilla 26.1.2:裸串 MOTD + 强制安全聊天 true(真机验过)
     {
-        let st = parse(r#"{"version":{"name":"26.1.2","protocol":775},"players":{"max":20,"online":0},"description":"§dVanilla","enforcesSecureChat":true}"#);
+        let st = parse(
+            r#"{"version":{"name":"26.1.2","protocol":775},"players":{"max":20,"online":0},"description":"§dVanilla","enforcesSecureChat":true}"#,
+        );
         println!("[vanilla]      proto={} secureChat={:?}", st.version.protocol, st.enforces_secure_chat);
         assert_eq!(st.version.protocol, 775);
         assert_eq!(st.enforces_secure_chat, Some(true));
@@ -68,7 +70,9 @@ fn main() {
 
     // BCC betterStatus:整合包名 + 版本(现代版 camelCase key)
     {
-        let st = parse(r#"{"betterStatus":{"name":"All The Mods 10","version":"4.4"},"isModded":true,"version":{"protocol":767}}"#);
+        let st = parse(
+            r#"{"betterStatus":{"name":"All The Mods 10","version":"4.4"},"isModded":true,"version":{"protocol":767}}"#,
+        );
         let mp = st.modpack.as_ref().expect("应解析 betterStatus");
         println!("[bcc]          modpack={:?} v{:?}", mp.name, mp.version);
         assert_eq!((mp.name.as_str(), mp.version.as_str()), ("All The Mods 10", "4.4"));
@@ -91,7 +95,10 @@ fn main() {
         // 普通服务器无此字段 → 空
         assert!(parse(r#"{"version":{"protocol":767}}"#).version.supported_versions.is_empty(), "无该字段应为空");
         // 字段类型乱报(非数组)也不应让整体失败
-        assert!(parse(r#"{"version":{"protocol":767,"supportedVersions":"oops"}}"#).version.supported_versions.is_empty(), "非数组应降级为空");
+        assert!(
+            parse(r#"{"version":{"protocol":767,"supportedVersions":"oops"}}"#).version.supported_versions.is_empty(),
+            "非数组应降级为空"
+        );
     }
 
     // 版本名 → 协议号映射(按版本 ping 用)
@@ -108,7 +115,9 @@ fn main() {
 
     // Forge FML2:明文 mods 数组 + channels(1.13–1.17 形态)
     {
-        let st = parse(r#"{"version":{"protocol":754},"forgeData":{"fmlNetworkVersion":2,"mods":[{"modId":"forge","modmarker":"ANY"},{"modId":"jei","modmarker":"9.7"}],"channels":[{"res":"jei:channel","version":"1","required":false}]}}"#);
+        let st = parse(
+            r#"{"version":{"protocol":754},"forgeData":{"fmlNetworkVersion":2,"mods":[{"modId":"forge","modmarker":"ANY"},{"modId":"jei","modmarker":"9.7"}],"channels":[{"res":"jei:channel","version":"1","required":false}]}}"#,
+        );
         let m = st.mods().expect("FML2");
         println!("[forge_fml2]   count={:?} channels={:?}", m.mod_count, m.channel_count);
         assert_eq!(m.mod_count, Some(2));
@@ -117,7 +126,9 @@ fn main() {
 
     // Velocity 代理:版本名伪装 + 无 modinfo/forgeData
     {
-        let st = parse(r#"{"version":{"name":"Velocity 1.7.2-1.21.11","protocol":774},"players":{"max":500,"online":0},"description":"A Velocity Server"}"#);
+        let st = parse(
+            r#"{"version":{"name":"Velocity 1.7.2-1.21.11","protocol":774},"players":{"max":500,"online":0},"description":"A Velocity Server"}"#,
+        );
         println!("[velocity]     version={:?} mods={:?}", st.version.name, st.mods().is_some());
         assert!(st.version.name.as_deref().unwrap_or("").starts_with("Velocity"));
         assert!(st.mods().is_none(), "纯代理无模组信息");

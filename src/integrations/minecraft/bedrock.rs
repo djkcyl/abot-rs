@@ -19,9 +19,8 @@ use crate::integrations::minecraft::protocol::{PingError, PingResult, ResolvedAd
 use crate::integrations::minecraft::status::{Players, StatusResponse, Version};
 
 /// RakNet OFFLINE MESSAGE MAGIC(固定 16 字节)。
-const MAGIC: [u8; 16] = [
-    0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78,
-];
+const MAGIC: [u8; 16] =
+    [0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78];
 const ID_UNCONNECTED_PING: u8 = 0x01;
 const ID_UNCONNECTED_PONG: u8 = 0x1c;
 /// Bedrock 默认端口。
@@ -47,29 +46,29 @@ impl Default for BedrockOptions {
 /// Bedrock 状态(分号串解析后的结构;字段一律信任上报、不清洗)。索引对应分号串里的位置。
 #[derive(Debug, Clone, Default)]
 pub struct BedrockStatus {
-    /// [0] 版本类型,`MCPE`(基岩/移动)或 `MCEE`(教育版),也可能是代理自报的非标准串。
+    /// \[0\] 版本类型,`MCPE`(基岩/移动)或 `MCEE`(教育版),也可能是代理自报的非标准串。
     pub edition: String,
-    /// [1] MOTD 第一行(含 `§` 颜色码)。
+    /// \[1\] MOTD 第一行(含 `§` 颜色码)。
     pub motd_line1: String,
-    /// [2] 协议号(**Bedrock 自成体系**,与 Java 的 47/340 那套无关)。解不出给 -1。
+    /// \[2\] 协议号(**Bedrock 自成体系**,与 Java 的 47/340 那套无关)。解不出给 -1。
     pub protocol: i32,
-    /// [3] 版本名,如 `1.21.90`;部分实现只给 `1` 这种,原样保留。
+    /// \[3\] 版本名,如 `1.21.90`;部分实现只给 `1` 这种,原样保留。
     pub version_name: String,
-    /// [4] 在线人数。
+    /// \[4\] 在线人数。
     pub online: i64,
-    /// [5] 最大人数。
+    /// \[5\] 最大人数。
     pub max: i64,
-    /// [6] 服务器 GUID(十进制串;代理常给与二进制 GUID 不一致的值,仅留底)。
+    /// \[6\] 服务器 GUID(十进制串;代理常给与二进制 GUID 不一致的值,仅留底)。
     pub server_guid: String,
-    /// [7] MOTD 第二行 / 世界名 —— 代理常塞品牌名而非真实世界名,故不叫 level_name。
+    /// \[7\] MOTD 第二行 / 世界名 —— 代理常塞品牌名而非真实世界名,故不叫 level_name。
     pub motd_line2: String,
-    /// [8] 游戏模式名,如 `Survival`。
+    /// \[8\] 游戏模式名,如 `Survival`。
     pub gamemode: String,
-    /// [9] 游戏模式数字(可选)。
+    /// \[9\] 游戏模式数字(可选)。
     pub gamemode_id: Option<i32>,
-    /// [10] IPv4 端口(可选)。
+    /// \[10\] IPv4 端口(可选)。
     pub port_v4: Option<u16>,
-    /// [11] IPv6 端口(可选)。
+    /// \[11\] IPv6 端口(可选)。
     pub port_v6: Option<u16>,
     /// 本地测得的往返延迟(用本机时钟,不依赖回显的 ping_time)。
     pub latency: Duration,
@@ -167,11 +166,8 @@ fn parse_motd(s: &str) -> BedrockStatus {
 /// 让附加信息行一眼看出是基岩服;协议号原样透传(Bedrock 体系)。
 pub fn to_ping_result(r: &BedrockResult) -> PingResult {
     let s = &r.status;
-    let motd = if s.motd_line2.is_empty() {
-        s.motd_line1.clone()
-    } else {
-        format!("{}\n{}", s.motd_line1, s.motd_line2)
-    };
+    let motd =
+        if s.motd_line2.is_empty() { s.motd_line1.clone() } else { format!("{}\n{}", s.motd_line1, s.motd_line2) };
     let mut name = format!("Bedrock {}", s.version_name).trim().to_string();
     if !s.gamemode.is_empty() {
         name = format!("{name} · {}", s.gamemode);

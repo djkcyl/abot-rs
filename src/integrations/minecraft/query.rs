@@ -55,8 +55,7 @@ pub async fn query(host: &str, port: u16, t: Duration) -> Result<QueryResult, Pi
         return Err(PingError::Protocol("query 握手响应异常".into()));
     }
     let (token_str, _) = read_cstr(&buf[5..n]);
-    let token: i32 =
-        token_str.trim().parse().map_err(|_| PingError::Protocol("challenge token 非整数".into()))?;
+    let token: i32 = token_str.trim().parse().map_err(|_| PingError::Protocol("challenge token 非整数".into()))?;
 
     // ② full stat
     let mut req = Vec::with_capacity(15);
@@ -125,11 +124,7 @@ fn parse_full(resp: &[u8], latency: Duration) -> Result<QueryResult, PingError> 
 /// 含 "player_" 时误切。
 fn parse_players(rest: &[u8]) -> Vec<String> {
     const MARKER: &[u8] = b"\x01player_\x00";
-    let start = rest
-        .windows(MARKER.len())
-        .position(|w| w == MARKER)
-        .map(|i| i + MARKER.len())
-        .unwrap_or(rest.len());
+    let start = rest.windows(MARKER.len()).position(|w| w == MARKER).map(|i| i + MARKER.len()).unwrap_or(rest.len());
     let mut p = &rest[start..];
     if p.first() == Some(&0) {
         p = &p[1..]; // 跳过段头的第二个 \0

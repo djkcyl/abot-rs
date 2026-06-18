@@ -84,20 +84,26 @@ async fn main() {
     assert_eq!(st.version.protocol, 765);
     assert_eq!(st.players.as_ref().unwrap().online, 42);
     assert!(result.latency.is_some(), "应测到延迟");
-    assert!(
-        spans.iter().any(|s| matches!(s.style.color, Some(minecraft::color::Color::Rgb(..)))),
-        "应解析出 hex 色"
-    );
+    assert!(spans.iter().any(|s| matches!(s.style.color, Some(minecraft::color::Color::Rgb(..)))), "应解析出 hex 色");
     assert!(spans.iter().any(|s| s.style.bold), "应解析出加粗");
     assert!(spans.iter().any(|s| s.text.contains('服')), "应含 CJK");
 
     // 合成校验未被实测覆盖的解析支路:FML1(modinfo)、FML2(明文 mods)、宽松整数(字符串数字)
     println!("\n== 合成解析校验 ==");
     let cases = [
-        ("FML1", r#"{"version":{"name":"1.12.2","protocol":340},"modinfo":{"type":"FML","modList":[{"modid":"forge","version":"14.23.5"},{"modid":"jei","version":"4.16"}]}}"#),
-        ("FML2", r#"{"version":{"name":"1.16.5","protocol":754},"forgeData":{"fmlNetworkVersion":2,"mods":[{"modId":"forge","modmarker":"ANY"},{"modId":"ironchest","modmarker":"1.16.5-11"}],"channels":[{"res":"ic:main","version":"1","required":false}]}}"#),
+        (
+            "FML1",
+            r#"{"version":{"name":"1.12.2","protocol":340},"modinfo":{"type":"FML","modList":[{"modid":"forge","version":"14.23.5"},{"modid":"jei","version":"4.16"}]}}"#,
+        ),
+        (
+            "FML2",
+            r#"{"version":{"name":"1.16.5","protocol":754},"forgeData":{"fmlNetworkVersion":2,"mods":[{"modId":"forge","modmarker":"ANY"},{"modId":"ironchest","modmarker":"1.16.5-11"}],"channels":[{"res":"ic:main","version":"1","required":false}]}}"#,
+        ),
         ("宽松整数", r#"{"version":{"name":"x","protocol":"765"},"players":{"max":"100","online":"7.0"}}"#),
-        ("坏sample+translate", r#"{"players":{"max":20,"online":3,"sample":{"oops":1}},"description":{"translate":"x","fallback":"回退文案"}}"#),
+        (
+            "坏sample+translate",
+            r#"{"players":{"max":20,"online":3,"sample":{"oops":1}},"description":{"translate":"x","fallback":"回退文案"}}"#,
+        ),
         ("players非对象", r#"{"players":"nope","version":{"protocol":"767"}}"#),
     ];
     for (label, json) in cases {
@@ -136,7 +142,8 @@ async fn main() {
     // 根本形态矩阵:涵盖空 JSON / 缺字段 / 各 MOTD 形态 / favicon 变体 / 整体非对象 —— 只要是合法
     // JSON 就绝不 panic、绝不整体失败,坏字段降级。
     println!("\n== 根本形态矩阵(永不 panic / 坏字段降级)==");
-    const TINY: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const TINY: &str =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
     let shapes: Vec<(&str, String)> = vec![
         ("空对象", "{}".into()),
         ("缺description", r#"{"version":{"name":"1.21","protocol":767}}"#.into()),
@@ -171,15 +178,29 @@ async fn main() {
     let neg = parse(r#"{"players":{"max":-1,"online":-1}}"#).players.unwrap();
     assert_eq!((neg.online, neg.max), (-1, -1), "负数人数不应被夹");
     assert!(parse(&format!(r#"{{"favicon":"{TINY}"}}"#)).favicon_png().is_some(), "无前缀 favicon 应解出");
-    assert!(parse(&format!(r#"{{"favicon":" data:image/jpeg;base64, {TINY} "}}"#)).favicon_png().is_some(), "带空白/异 MIME favicon 应解出");
+    assert!(
+        parse(&format!(r#"{{"favicon":" data:image/jpeg;base64, {TINY} "}}"#)).favicon_png().is_some(),
+        "带空白/异 MIME favicon 应解出"
+    );
     assert!(parse(r#""x""#).players.is_none(), "整体非对象应降级为默认");
-    assert_eq!(parse(r#"{"description":{"translate":"%s 加入 %s","with":["A","世界"]}}"#).description.plain(), "A 加入 世界", "translate %s 应被 with 顺序填充");
-    assert_eq!(parse(r#"{"description":{"translate":"%2$s-%1$s","with":["a","b"]}}"#).description.plain(), "b-a", "translate %N$s 应按位填充");
-    let mp = parse(r#"{"betterStatus":{"name":"ATM10","version":"1.5.0"}}"#).modpack.expect("BCC betterStatus 应解析为整合包");
+    assert_eq!(
+        parse(r#"{"description":{"translate":"%s 加入 %s","with":["A","世界"]}}"#).description.plain(),
+        "A 加入 世界",
+        "translate %s 应被 with 顺序填充"
+    );
+    assert_eq!(
+        parse(r#"{"description":{"translate":"%2$s-%1$s","with":["a","b"]}}"#).description.plain(),
+        "b-a",
+        "translate %N$s 应按位填充"
+    );
+    let mp = parse(r#"{"betterStatus":{"name":"ATM10","version":"1.5.0"}}"#)
+        .modpack
+        .expect("BCC betterStatus 应解析为整合包");
     assert_eq!((mp.name.as_str(), mp.version.as_str()), ("ATM10", "1.5.0"), "整合包名+版本应提取");
     assert!(parse(r#"{"betterStatus":{"name":"","version":""}}"#).modpack.is_none(), "空 betterStatus 应忽略");
     // BCC 旧版 Forge 1.20.1 用连字符 key `better-status`
-    let hy = parse(r#"{"better-status":{"name":"RAD2","version":"1.20"}}"#).modpack.expect("连字符 better-status 应解析");
+    let hy =
+        parse(r#"{"better-status":{"name":"RAD2","version":"1.20"}}"#).modpack.expect("连字符 better-status 应解析");
     assert_eq!((hy.name.as_str(), hy.version.as_str()), ("RAD2", "1.20"), "连字符 key 同样提名+版本");
     // BCC 未配置时默认值是 "??",应归一为空而非当真实值
     assert!(parse(r#"{"betterStatus":{"name":"??","version":"??"}}"#).modpack.is_none(), "占位 ?? 应被归一忽略");
@@ -218,10 +239,8 @@ async fn main() {
     std::fs::write(&motd_path, &motd).unwrap();
 
     // 1.8.9 目标:hex 色识别不了,按策略降到最近命名色
-    let old_opts = minecraft::render::RenderOptions {
-        target: minecraft::render::TargetVersion::V1_8_9,
-        ..Default::default()
-    };
+    let old_opts =
+        minecraft::render::RenderOptions { target: minecraft::render::TargetVersion::V1_8_9, ..Default::default() };
     let motd_old = minecraft::render::render_motd_png(&spans, &old_opts).unwrap();
     let old_path = dir.join("mc_selftest_motd_1.8.9.png");
     std::fs::write(&old_path, &motd_old).unwrap();
@@ -243,7 +262,8 @@ async fn main() {
 async fn test_via_proxy_resolve() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().unwrap().port();
-    let real = r#"{"version":{"name":"Paper 1.20.1","protocol":763},"players":{"max":20,"online":3},"description":"Backend"}"#;
+    let real =
+        r#"{"version":{"name":"Paper 1.20.1","protocol":763},"players":{"max":20,"online":3},"description":"Backend"}"#;
     // 代理只支持 763(1.20.1)这一档(阶梯里有、但不是最新);775 会被当未注册退占位。
     tokio::spawn(async move {
         while let Ok((sock, _)) = listener.accept().await {
@@ -257,7 +277,11 @@ async fn test_via_proxy_resolve() {
     assert_eq!(placeholder.status.version.name.as_deref(), Some("ViaProxy"), "默认 -1 应拿到 ViaProxy 占位");
 
     let resolved = minecraft::ping_resolved(&target, &opts).await.expect("resolved");
-    assert_eq!(resolved.status.version.name.as_deref(), Some("Paper 1.20.1"), "resolved 应阶梯命中老版本穿透后端,而非被 775 挡回");
+    assert_eq!(
+        resolved.status.version.name.as_deref(),
+        Some("Paper 1.20.1"),
+        "resolved 应阶梯命中老版本穿透后端,而非被 775 挡回"
+    );
     assert_eq!(resolved.status.players.as_ref().unwrap().online, 3);
     println!("[viaproxy] -1→占位;resolved 走阶梯命中 1.20.1(763)穿透后端 ✔(未硬用最新版 775)");
 }
@@ -341,9 +365,8 @@ async fn read_frame(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
 /// Bedrock(RakNet/UDP)ping:本地起一个假基岩服(应答 Unconnected Pong),验证发包/解析/映射/渲染全链路。
 async fn test_bedrock() {
     use abot::integrations::minecraft::bedrock::{self, BedrockOptions};
-    const MAGIC: [u8; 16] = [
-        0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78,
-    ];
+    const MAGIC: [u8; 16] =
+        [0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78];
     let sock = tokio::net::UdpSocket::bind("127.0.0.1:0").await.expect("udp bind");
     let port = sock.local_addr().unwrap().port();
     // 含 § 码 + CJK 的 MOTD,12 段(官方 BDS 形态)
@@ -440,7 +463,11 @@ fn test_additional_edges() {
     assert_eq!(parse(r#"{"description":[null,"text"]}"#).description.plain(), "text", "数组含 null 应跳过、保留其余");
 
     // translate %N$s 越界(只有 2 个参数却引用 %5$s)→ 该占位符留空,不 panic
-    assert_eq!(parse(r#"{"description":{"translate":"%5$s","with":["a","b"]}}"#).description.plain(), "", "越界 %N$s 应留空");
+    assert_eq!(
+        parse(r#"{"description":{"translate":"%5$s","with":["a","b"]}}"#).description.plain(),
+        "",
+        "越界 %N$s 应留空"
+    );
 
     println!("  附加边角形态:数字/非法 color、对象 protocol、布尔 max、含 null 数组、越界 translate —— 全部安静降级 ✔");
 }

@@ -250,10 +250,7 @@ fn layout(spans: &[Span], max_width: u32, max_lines: usize, scale: u32) -> Vec<V
 /// 调试/校验用:返回 MOTD 经折行 + bidi 重排 + 阿拉伯塑形后的**每行可见序文本**(不渲染像素)。
 /// 可见序即从左到右实际画出的字符顺序,RTL 段已反转、阿拉伯字母已转 presentation form。
 pub fn visual_lines(spans: &[Span], max_width: u32, max_lines: usize, scale: u32) -> Vec<String> {
-    layout(spans, max_width, max_lines, scale)
-        .iter()
-        .map(|line| line.iter().map(|p| p.ch).collect())
-        .collect()
+    layout(spans, max_width, max_lines, scale).iter().map(|line| line.iter().map(|p| p.ch).collect()).collect()
 }
 
 /// 一行的双向(bidi)重排,精确复刻原版 ClientLanguage.getVisualOrder → FormattedBidiReorder:
@@ -293,15 +290,13 @@ fn reorder_bidi(line: Vec<Placed>, scale: u32) -> Vec<Placed> {
     let (levels, runs) = bidi.visual_runs(para, para.range.clone());
 
     // byte 偏移 → shaped 下标,便于把视觉序字符映回样式。
-    let byte_to_idx: HashMap<usize, usize> =
-        text.char_indices().enumerate().map(|(idx, (b, _))| (b, idx)).collect();
+    let byte_to_idx: HashMap<usize, usize> = text.char_indices().enumerate().map(|(idx, (b, _))| (b, idx)).collect();
 
     // 3. 按视觉顺序拼接每个 run;odd(RTL)level 的 run 逆序 + 逐码点镜像。
     let mut out: Vec<Placed> = Vec::with_capacity(shaped.len());
     for run in runs {
         let rtl = levels[run.start].is_rtl();
-        let mut chars: Vec<(usize, char)> =
-            text[run.clone()].char_indices().map(|(b, c)| (run.start + b, c)).collect();
+        let mut chars: Vec<(usize, char)> = text[run.clone()].char_indices().map(|(b, c)| (run.start + b, c)).collect();
         if rtl {
             chars.reverse();
         }
@@ -344,13 +339,20 @@ fn is_rtl_char(c: char) -> bool {
 /// 其余(罕见数学符号等)不镜像,与原版差异仅限极少见字符。
 fn mirror(c: char) -> char {
     match c {
-        '(' => ')', ')' => '(',
-        '[' => ']', ']' => '[',
-        '{' => '}', '}' => '{',
-        '<' => '>', '>' => '<',
-        '«' => '»', '»' => '«',
-        '‹' => '›', '›' => '‹',
-        '\u{2264}' => '\u{2265}', '\u{2265}' => '\u{2264}', // ≤ ≥
+        '(' => ')',
+        ')' => '(',
+        '[' => ']',
+        ']' => '[',
+        '{' => '}',
+        '}' => '{',
+        '<' => '>',
+        '>' => '<',
+        '«' => '»',
+        '»' => '«',
+        '‹' => '›',
+        '›' => '‹',
+        '\u{2264}' => '\u{2265}',
+        '\u{2265}' => '\u{2264}', // ≤ ≥
         _ => c,
     }
 }
@@ -372,37 +374,16 @@ fn draw_line(img: &mut RgbaImage, ctx: &Ctx, x0: i32, top: i32, line: &[Placed],
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_glyph(
-    img: &mut RgbaImage,
-    ctx: &Ctx,
-    pen: i32,
-    top: i32,
-    p: &Placed,
-    li: usize,
-    ci: usize,
-    is_shadow: bool,
-) {
+fn draw_glyph(img: &mut RgbaImage, ctx: &Ctx, pen: i32, top: i32, p: &Placed, li: usize, ci: usize, is_shadow: bool) {
     let s = ctx.opts.scale;
-    let color = if is_shadow {
-        shadow_of(resolve_fg(&p.style, ctx))
-    } else {
-        resolve_fg(&p.style, ctx)
-    };
-    let glyph = if p.style.obfuscated {
-        scramble(&p.glyph, salt(ctx.opts.obfuscate_seed, li, ci))
-    } else {
-        p.glyph
-    };
+    let color = if is_shadow { shadow_of(resolve_fg(&p.style, ctx)) } else { resolve_fg(&p.style, ctx) };
+    let glyph = if p.style.obfuscated { scramble(&p.glyph, salt(ctx.opts.obfuscate_seed, li, ci)) } else { p.glyph };
     let blk = block(&glyph, s);
     let baseline = top + (BASELINE * s) as i32;
     let glyph_top = baseline - glyph.ascent as i32 * blk as i32;
 
     // 阴影偏移(GUI 像素 × scale):默认字体 1、Unihex 0.5。
-    let shadow_off = if is_shadow {
-        if glyph.unifont { (s / 2).max(1) as i32 } else { s as i32 }
-    } else {
-        0
-    };
+    let shadow_off = if is_shadow { if glyph.unifont { (s / 2).max(1) as i32 } else { s as i32 } } else { 0 };
     let bold_off = if glyph.unifont { (s / 2).max(1) as i32 } else { s as i32 };
 
     // 字形像素
@@ -526,9 +507,8 @@ fn tofu(_ch: char) -> Glyph {
 }
 
 fn salt(seed: u64, li: usize, ci: usize) -> u64 {
-    let mut x = seed
-        ^ (li as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        ^ (ci as u64).wrapping_mul(0xD1B5_4A32_D192_ED03);
+    let mut x =
+        seed ^ (li as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (ci as u64).wrapping_mul(0xD1B5_4A32_D192_ED03);
     x ^= x >> 30;
     x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x ^= x >> 27;
@@ -600,9 +580,7 @@ struct EntryLayout {
 
 /// 量好一个条目的版式(不落笔)。固定 5 行高、图标方形等高,口径与原独立卡一致。
 fn entry_layout(result: &PingResult, title: Option<&str>, scale: u32) -> EntryLayout {
-    let title = title
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("{}:{}", result.address.host, result.address.port));
+    let title = title.map(str::to_string).unwrap_or_else(|| format!("{}:{}", result.address.host, result.address.port));
     let motd = result.status.description.to_spans();
     let line4 = info_line1(result); // 总有(至少协议号)
     let line5 = info_line2(result); // 可能空
@@ -617,12 +595,8 @@ fn entry_layout(result: &PingResult, title: Option<&str>, scale: u32) -> EntryLa
     let height = ENTRY_PAD * 2 + inner;
 
     let tooltip = (n > 0).then(|| {
-        let content_w = sample_lines
-            .iter()
-            .map(|l| measure_dev(l, scale).div_ceil(scale))
-            .max()
-            .unwrap_or(0)
-            .clamp(8, 200);
+        let content_w =
+            sample_lines.iter().map(|l| measure_dev(l, scale).div_ceil(scale)).max().unwrap_or(0).clamp(8, 200);
         (content_w, content_w + TT_PAD * 2, (n * LINE_HEIGHT + TT_PAD * 2).min(inner))
     });
 
@@ -634,20 +608,7 @@ fn entry_layout(result: &PingResult, title: Option<&str>, scale: u32) -> EntryLa
         None => motd_right + ENTRY_PAD,
     };
 
-    EntryLayout {
-        icon,
-        text_x,
-        motd_right,
-        tt_x,
-        height,
-        full_w,
-        title,
-        motd,
-        line4,
-        line5,
-        sample_lines,
-        tooltip,
-    }
+    EntryLayout { icon, text_x, motd_right, tt_x, height, full_w, title, motd, line4, line5, sample_lines, tooltip }
 }
 
 /// 把条目画到 `img` 上,左上角在 GUI 坐标 `(ox, oy)`。图标 / 信号格 / 人数 / 标题 / 两行 MOTD /
@@ -682,7 +643,16 @@ fn draw_entry(img: &mut RgbaImage, text: &RenderOptions, ox: u32, oy: u32, lay: 
     draw_block_dev(img, text, [120, 130, 140], tx, dyg(ENTRY_PAD + 12 + LINE_HEIGHT * 2), &lay.line4, MOTD_WIDTH, 1);
     // 第 5 行:整合包 · 模组 · Via · secure chat(空则不画)。
     if !lay.line5.is_empty() {
-        draw_block_dev(img, text, [110, 120, 135], tx, dyg(ENTRY_PAD + 12 + LINE_HEIGHT * 3), &lay.line5, MOTD_WIDTH, 1);
+        draw_block_dev(
+            img,
+            text,
+            [110, 120, 135],
+            tx,
+            dyg(ENTRY_PAD + 12 + LINE_HEIGHT * 3),
+            &lay.line5,
+            MOTD_WIDTH,
+            1,
+        );
     }
 
     // 右侧 sample 悬浮窗(仿原版 tooltip,上对齐)。
@@ -713,11 +683,7 @@ pub fn render_server_card(result: &PingResult, opts: &CardOptions) -> RgbaImage 
     let bg = RenderOptions { background: Some(opts.background), ..Default::default() };
     let mut img = new_canvas(lay.full_w * s, lay.height * s, &bg);
     draw_entry(&mut img, &text, 0, 0, &lay, result);
-    if opts.checker {
-        composite_over_checker(&img, (s * 2).max(4))
-    } else {
-        img
-    }
+    if opts.checker { composite_over_checker(&img, (s * 2).max(4)) } else { img }
 }
 
 /// 仿原版物品/列表悬浮窗:深色底(原版 `0xF0100010`,叠在深色卡底上≈纯黑紫)+ 1px 紫色上下渐变边
@@ -741,18 +707,14 @@ fn draw_tooltip(img: &mut RgbaImage, x: i32, y: i32, w: u32, h: u32, scale: u32)
     }
 }
 
-pub fn render_server_card_png(
-    result: &PingResult,
-    opts: &CardOptions,
-) -> Result<Vec<u8>, image::ImageError> {
+pub fn render_server_card_png(result: &PingResult, opts: &CardOptions) -> Result<Vec<u8>, image::ImageError> {
     encode_png(&render_server_card(result, opts))
 }
 
 /// 把多张图竖排合成一张长图。
 pub fn stack_vertical(imgs: &[RgbaImage], gap: u32, bg: [u8; 4]) -> RgbaImage {
     let width = imgs.iter().map(|i| i.width()).max().unwrap_or(1).max(1);
-    let total_h = imgs.iter().map(|i| i.height()).sum::<u32>()
-        + gap * (imgs.len().saturating_sub(1)) as u32;
+    let total_h = imgs.iter().map(|i| i.height()).sum::<u32>() + gap * (imgs.len().saturating_sub(1)) as u32;
     let mut out = RgbaImage::from_pixel(width, total_h.max(1), Rgba(bg));
     let mut y = 0u32;
     for im in imgs {
@@ -848,19 +810,12 @@ fn info_line2(result: &PingResult) -> Vec<Span> {
         parts.push("免举报".into());
     }
     // 玩家 sample 不再以「抽样 N」计数出现 —— 改由右侧仿原版悬浮窗渲染实际内容(见 render_server_card)。
-    if parts.is_empty() {
-        Vec::new()
-    } else {
-        line_spans(&parts.join("  ·  "))
-    }
+    if parts.is_empty() { Vec::new() } else { line_spans(&parts.join("  ·  ")) }
 }
 
 /// 量一行 span 的设备像素宽。
 fn measure_dev(spans: &[Span], scale: u32) -> u32 {
-    layout(spans, u32::MAX, 1, scale)
-        .first()
-        .map(|l| l.iter().map(|p| p.advance).sum())
-        .unwrap_or(0)
+    layout(spans, u32::MAX, 1, scale).first().map(|l| l.iter().map(|p| p.advance).sum()).unwrap_or(0)
 }
 
 /// 在设备坐标处左对齐画若干行 span。
@@ -909,9 +864,8 @@ struct PingSprites {
 fn ping_sprites() -> &'static PingSprites {
     static P: OnceLock<PingSprites> = OnceLock::new();
     P.get_or_init(|| {
-        let load = |b: &[u8]| {
-            image::load_from_memory(b).map(|d| d.to_rgba8()).unwrap_or_else(|_| RgbaImage::new(10, 8))
-        };
+        let load =
+            |b: &[u8]| image::load_from_memory(b).map(|d| d.to_rgba8()).unwrap_or_else(|_| RgbaImage::new(10, 8));
         PingSprites {
             bars: [
                 load(include_bytes!("../../../assets/minecraft/sprites/ping_1.png")),
@@ -1017,12 +971,7 @@ pub struct ScreenOptions {
 
 impl Default for ScreenOptions {
     fn default() -> Self {
-        Self {
-            scale: 4,
-            target: TargetVersion::Latest,
-            old_color_policy: OldColorPolicy::Downsample,
-            title: None,
-        }
+        Self { scale: 4, target: TargetVersion::Latest, old_color_policy: OldColorPolicy::Downsample, title: None }
     }
 }
 
@@ -1036,9 +985,7 @@ struct GuiTextures {
 fn gui_textures() -> &'static GuiTextures {
     static G: OnceLock<GuiTextures> = OnceLock::new();
     G.get_or_init(|| {
-        let load = |b: &[u8]| {
-            image::load_from_memory(b).map(|d| d.to_rgba8()).unwrap_or_else(|_| RgbaImage::new(1, 1))
-        };
+        let load = |b: &[u8]| image::load_from_memory(b).map(|d| d.to_rgba8()).unwrap_or_else(|_| RgbaImage::new(1, 1));
         GuiTextures {
             dirt: load(include_bytes!("../../../assets/minecraft/gui/options_background.png")),
             button: load(include_bytes!("../../../assets/minecraft/gui/button_1165.png")),
@@ -1113,12 +1060,7 @@ fn draw_button(img: &mut RgbaImage, opts: &RenderOptions, x_gui: u32, y_gui: u32
                 let px = tex.get_pixel((u0 + gx).min(sw - 1), gy).0;
                 for sy in 0..s {
                     for sx in 0..s {
-                        put_blend(
-                            img,
-                            ((x_gui + dx0 + gx) * s + sx) as i32,
-                            ((y_gui + gy) * s + sy) as i32,
-                            px,
-                        );
+                        put_blend(img, ((x_gui + dx0 + gx) * s + sx) as i32, ((y_gui + gy) * s + sy) as i32, px);
                     }
                 }
             }
@@ -1169,7 +1111,16 @@ pub fn render_select_server_screen(result: &PingResult, opts: &ScreenOptions) ->
     // 标题「Play Multiplayer」白字居中,y=20(原版 drawCenteredString)。
     let title_spans = line_spans("Play Multiplayer");
     let tw = measure_dev(&title_spans, s);
-    draw_block_dev(&mut img, &text, [255, 255, 255], (cw * s) as i32 - tw as i32 / 2, (20 * s) as i32, &title_spans, w_gui, 1);
+    draw_block_dev(
+        &mut img,
+        &text,
+        [255, 255, 255],
+        (cw * s) as i32 - tw as i32 / 2,
+        (20 * s) as i32,
+        &title_spans,
+        w_gui,
+        1,
+    );
 
     // ---- 选中条目(列表顶端,原版 1.16.5 度量)----
     // getRowLeft() = width/2 - getRowWidth()/2 + 2 = cw - 150;条目内容左上即此(无内缩)。
@@ -1193,10 +1144,7 @@ pub fn render_select_server_screen(result: &PingResult, opts: &ScreenOptions) ->
     );
 
     // 条目内容(图标 + 名字 + 两行 MOTD + 信号格 + 人数)。
-    let title = opts
-        .title
-        .clone()
-        .unwrap_or_else(|| format!("{}:{}", result.address.host, result.address.port));
+    let title = opts.title.clone().unwrap_or_else(|| format!("{}:{}", result.address.host, result.address.port));
     let _ = row_right;
     draw_vanilla_entry(&mut img, &text, row_left, entry_top, &title, Some(result));
 
@@ -1205,10 +1153,28 @@ pub fn render_select_server_screen(result: &PingResult, opts: &ScreenOptions) ->
     let scan_y = scan_row_top + ITEM_H / 2 - LINE_HEIGHT / 2; // 行内竖向居中
     let scan = line_spans("Scanning for games on your local network");
     let scan_w = measure_dev(&scan, s);
-    draw_block_dev(&mut img, &text, [255, 255, 255], (cw * s) as i32 - scan_w as i32 / 2, (scan_y * s) as i32, &scan, w_gui, 1);
+    draw_block_dev(
+        &mut img,
+        &text,
+        [255, 255, 255],
+        (cw * s) as i32 - scan_w as i32 / 2,
+        (scan_y * s) as i32,
+        &scan,
+        w_gui,
+        1,
+    );
     let dots = line_spans("o O o");
     let dots_w = measure_dev(&dots, s);
-    draw_block_dev(&mut img, &text, LIST_GRAY, (cw * s) as i32 - dots_w as i32 / 2, ((scan_y + LINE_HEIGHT) * s) as i32, &dots, w_gui, 1);
+    draw_block_dev(
+        &mut img,
+        &text,
+        LIST_GRAY,
+        (cw * s) as i32 - dots_w as i32 / 2,
+        ((scan_y + LINE_HEIGHT) * s) as i32,
+        &dots,
+        w_gui,
+        1,
+    );
 
     draw_footer_buttons(&mut img, &text, cw, h_gui);
     // 透明 favicon 的镂空处叠棋盘格(与完整数据卡口径一致),其余像素本就不透明、棋盘格不显。
@@ -1292,10 +1258,7 @@ fn draw_footer_buttons(img: &mut RgbaImage, text: &RenderOptions, cw: u32, h_gui
 }
 
 /// 选服整屏(单服)→ PNG。
-pub fn render_select_server_png(
-    result: &PingResult,
-    opts: &ScreenOptions,
-) -> Result<Vec<u8>, image::ImageError> {
+pub fn render_select_server_png(result: &PingResult, opts: &ScreenOptions) -> Result<Vec<u8>, image::ImageError> {
     encode_png(&render_select_server_screen(result, opts))
 }
 
@@ -1341,7 +1304,16 @@ pub fn render_server_list_screen(entries: &[ListEntry], opts: &ScreenOptions) ->
     // 标题。
     let title = line_spans("Play Multiplayer");
     let tw = measure_dev(&title, s);
-    draw_block_dev(&mut img, &text, [255, 255, 255], (cw * s) as i32 - tw as i32 / 2, (20 * s) as i32, &title, w_gui, 1);
+    draw_block_dev(
+        &mut img,
+        &text,
+        [255, 255, 255],
+        (cw * s) as i32 - tw as i32 / 2,
+        (20 * s) as i32,
+        &title,
+        w_gui,
+        1,
+    );
 
     // 条目堆叠(无选中框,直接画在列表泥土上)。
     let row_left = cw - ROW_W / 2 + 2;
@@ -1356,9 +1328,6 @@ pub fn render_server_list_screen(entries: &[ListEntry], opts: &ScreenOptions) ->
 }
 
 /// 多服列表整屏 → PNG。
-pub fn render_server_list_png(
-    entries: &[ListEntry],
-    opts: &ScreenOptions,
-) -> Result<Vec<u8>, image::ImageError> {
+pub fn render_server_list_png(entries: &[ListEntry], opts: &ScreenOptions) -> Result<Vec<u8>, image::ImageError> {
     encode_png(&render_server_list_screen(entries, opts))
 }

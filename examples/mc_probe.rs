@@ -39,8 +39,7 @@ async fn main() {
 
     // --raw:只打印未截断的原始状态 JSON(抓真机样本用)。
     if std::env::args().any(|a| a == "--raw") {
-        let opts =
-            PingOptions { use_srv: true, allow_legacy: false, timeout: t, ..Default::default() };
+        let opts = PingOptions { use_srv: true, allow_legacy: false, timeout: t, ..Default::default() };
         match minecraft::ping_with(&addr, &opts).await {
             Ok(r) => println!("{}", r.raw_json),
             Err(e) => eprintln!("失败: {e}"),
@@ -74,28 +73,50 @@ async fn main() {
                 }
             }
             println!("latency    : {:?}", r.latency);
-            println!("secureChat : {:?}   previewsChat: {:?}   preventsChatReports: {:?}",
-                st.enforces_secure_chat, st.previews_chat, st.prevents_chat_reports);
-            println!("favicon    : {}", st.favicon_png().map(|b| format!("{} bytes", b.len())).unwrap_or_else(|| "无".into()));
-            println!("forgeData  : {}   modinfo: {}   isModded: {:?}", st.forge_data.is_some(), st.modinfo.is_some(), st.is_modded);
+            println!(
+                "secureChat : {:?}   previewsChat: {:?}   preventsChatReports: {:?}",
+                st.enforces_secure_chat, st.previews_chat, st.prevents_chat_reports
+            );
+            println!(
+                "favicon    : {}",
+                st.favicon_png().map(|b| format!("{} bytes", b.len())).unwrap_or_else(|| "无".into())
+            );
+            println!(
+                "forgeData  : {}   modinfo: {}   isModded: {:?}",
+                st.forge_data.is_some(),
+                st.modinfo.is_some(),
+                st.is_modded
+            );
             if let Some(mp) = &st.modpack {
                 println!("modpack    : {:?} v{:?} (BCC betterStatus)", mp.name, mp.version);
             }
             if let Some(m) = st.mods() {
-                println!("mods       : loader={:?} count={:?} channels={:?} truncated={}",
-                    m.loader, m.mod_count, m.channel_count, m.truncated);
+                println!(
+                    "mods       : loader={:?} count={:?} channels={:?} truncated={}",
+                    m.loader, m.mod_count, m.channel_count, m.truncated
+                );
                 for (id, ver) in m.mods.iter().take(12) {
                     println!("             · {id} {ver}");
                 }
-                if m.mods.len() > 12 { println!("             · …(+{})", m.mods.len() - 12); }
+                if m.mods.len() > 12 {
+                    println!("             · …(+{})", m.mods.len() - 12);
+                }
             }
             println!("desc(plain): {:?}", st.description.plain());
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.raw_json) {
                 let pretty = serde_json::to_string_pretty(&v).unwrap_or_default();
                 // 截断 favicon 那种超长串,便于看结构
-                let shown: String = pretty.lines().map(|l| {
-                    if l.len() > 160 { format!("{}…(截断 {} 字符)", &l[..160], l.len() - 160) } else { l.to_string() }
-                }).collect::<Vec<_>>().join("\n");
+                let shown: String = pretty
+                    .lines()
+                    .map(|l| {
+                        if l.len() > 160 {
+                            format!("{}…(截断 {} 字符)", &l[..160], l.len() - 160)
+                        } else {
+                            l.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 println!("----- 原始 JSON -----\n{shown}");
             }
         }
@@ -109,7 +130,10 @@ async fn main() {
     };
     match minecraft::legacy::ping_legacy(&h, p, t).await {
         Ok((ls, lat)) => {
-            println!("proto={} version={:?} online={}/{} latency={:?}", ls.protocol, ls.version, ls.online, ls.max, lat);
+            println!(
+                "proto={} version={:?} online={}/{} latency={:?}",
+                ls.protocol, ls.version, ls.online, ls.max, lat
+            );
             println!("motd={:?}", ls.motd);
         }
         Err(e) => println!("旧版失败: {e}"),

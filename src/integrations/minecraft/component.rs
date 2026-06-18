@@ -109,10 +109,7 @@ fn from_value(v: &serde_json::Value) -> Component {
         Value::Object(obj) => {
             let get_str = |k: &str| obj.get(k).and_then(Value::as_str).map(str::to_string);
             let arr = |k: &str| {
-                obj.get(k)
-                    .and_then(Value::as_array)
-                    .map(|a| a.iter().map(from_value).collect())
-                    .unwrap_or_default()
+                obj.get(k).and_then(Value::as_array).map(|a| a.iter().map(from_value).collect()).unwrap_or_default()
             };
             Component {
                 text: get_str("text").unwrap_or_default(),

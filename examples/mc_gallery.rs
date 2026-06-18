@@ -65,12 +65,7 @@ async fn main() {
         match res {
             Ok(r) => {
                 let ms = r.latency.map(|d| d.as_millis()).unwrap_or(0);
-                let pc = r
-                    .status
-                    .players
-                    .as_ref()
-                    .map(|p| format!("{}/{}", p.online, p.max))
-                    .unwrap_or_default();
+                let pc = r.status.players.as_ref().map(|p| format!("{}/{}", p.online, p.max)).unwrap_or_default();
                 println!("✔ {addr:<26} {ms:>4}ms  {pc}");
                 let opts = CardOptions { title: Some(addr.clone()), ..Default::default() };
                 cards.push(minecraft::render::render_server_card(&r, &opts));
@@ -92,11 +87,5 @@ async fn main() {
     let path = std::env::temp_dir().join("mc_gallery.png");
     std::fs::write(&path, &png).unwrap();
 
-    println!(
-        "\n长图: {}  ({}x{}, {} 张卡)",
-        path.display(),
-        long.width(),
-        long.height(),
-        cards.len()
-    );
+    println!("\n长图: {}  ({}x{}, {} 张卡)", path.display(), long.width(), long.height(), cards.len());
 }

@@ -49,11 +49,7 @@ impl Modpack {
         };
         let name = norm("name");
         let version = norm("version");
-        if name.is_empty() && version.is_empty() {
-            None
-        } else {
-            Some(Modpack { name, version })
-        }
+        if name.is_empty() && version.is_empty() { None } else { Some(Modpack { name, version }) }
     }
 }
 
@@ -195,26 +191,26 @@ impl StatusResponse {
             && mi.get("type").and_then(Value::as_str) == Some("FML")
         {
             let mods = mi
-                    .get("modList")
-                    .and_then(Value::as_array)
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|m| {
-                                let id = m.get("modid").and_then(Value::as_str)?;
-                                let ver = m.get("version").and_then(Value::as_str).unwrap_or("");
-                                Some((id.to_string(), ver.to_string()))
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let n = mods.len();
-                return Some(ServerMods {
-                    loader: ModLoader::Forge,
-                    mods,
-                    mod_count: Some(n),
-                    channel_count: None,
-                    truncated: false,
-                });
+                .get("modList")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| {
+                            let id = m.get("modid").and_then(Value::as_str)?;
+                            let ver = m.get("version").and_then(Value::as_str).unwrap_or("");
+                            Some((id.to_string(), ver.to_string()))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let n = mods.len();
+            return Some(ServerMods {
+                loader: ModLoader::Forge,
+                mods,
+                mod_count: Some(n),
+                channel_count: None,
+                truncated: false,
+            });
         }
         if self.is_modded == Some(true) {
             return Some(ServerMods {
@@ -246,13 +242,7 @@ fn parse_forge_data(fd: &Value) -> ServerMods {
             })
             .collect();
         let n = mods.len();
-        return ServerMods {
-            loader: ModLoader::Forge,
-            mods,
-            mod_count: Some(n),
-            channel_count: channels,
-            truncated,
-        };
+        return ServerMods { loader: ModLoader::Forge, mods, mod_count: Some(n), channel_count: channels, truncated };
     }
 
     // FML3:mods 为空,明细打包在 d
@@ -270,13 +260,7 @@ fn parse_forge_data(fd: &Value) -> ServerMods {
     }
 
     // forgeData 在但取不出明细
-    ServerMods {
-        loader: ModLoader::Forge,
-        mods: Vec::new(),
-        mod_count: None,
-        channel_count: channels,
-        truncated,
-    }
+    ServerMods { loader: ModLoader::Forge, mods: Vec::new(), mod_count: None, channel_count: channels, truncated }
 }
 
 // ---- 宽松取值:数字 / 字符串 / 浮点 / 布尔 各种乱报都接住,取不到给缺省 ----

@@ -48,23 +48,13 @@ fn build_request(host: &str, port: u16) -> Vec<u8> {
 }
 
 /// 对 `host:port` 发旧版 ping,返回解析结果与往返耗时。
-pub async fn ping_legacy(
-    host: &str,
-    port: u16,
-    t: Duration,
-) -> Result<(LegacyStatus, Duration), PingError> {
-    let stream = timeout(t, TokioStream::connect((host, port)))
-        .await
-        .map_err(|_| PingError::Timeout)?
-        .map_err(PingError::Io)?;
+pub async fn ping_legacy(host: &str, port: u16, t: Duration) -> Result<(LegacyStatus, Duration), PingError> {
+    let stream =
+        timeout(t, TokioStream::connect((host, port))).await.map_err(|_| PingError::Timeout)?.map_err(PingError::Io)?;
     timeout(t, exchange(stream, host, port)).await.map_err(|_| PingError::Timeout)?
 }
 
-async fn exchange(
-    mut s: TokioStream,
-    host: &str,
-    port: u16,
-) -> Result<(LegacyStatus, Duration), PingError> {
+async fn exchange(mut s: TokioStream, host: &str, port: u16) -> Result<(LegacyStatus, Duration), PingError> {
     let start = Instant::now();
     s.write_all(&build_request(host, port)).await.map_err(PingError::Io)?;
     s.flush().await.map_err(PingError::Io)?;
@@ -81,8 +71,7 @@ async fn exchange(
     s.read_exact(&mut bytes).await.map_err(PingError::Io)?;
     let elapsed = start.elapsed();
 
-    let units: Vec<u16> =
-        bytes.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+    let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
     let text = String::from_utf16_lossy(&units);
     Ok((parse_legacy(&text)?, elapsed))
 }

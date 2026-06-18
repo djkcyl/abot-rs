@@ -155,10 +155,7 @@ fn parse_unifont(data: &[u8]) -> HashMap<char, Glyph> {
         };
 
         if let Some(ch) = char::from_u32(cp as u32) {
-            map.insert(
-                ch,
-                Glyph { advance, width, height: 16, ascent: UNIFONT_ASCENT, unifont: true, rows },
-            );
+            map.insert(ch, Glyph { advance, width, height: 16, ascent: UNIFONT_ASCENT, unifont: true, rows });
         }
     }
     map
