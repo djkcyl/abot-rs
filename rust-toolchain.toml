@@ -1,0 +1,5 @@
+[toolchain]
+# 与 CI(dtolnay/rust-toolchain@stable)对齐:本地默认 nightly 的 rustfmt 折行规则
+# 和 stable 不一致,会让 `cargo fmt` 排出过不了 CI 的格式。钉到 stable 彻底消除这种漂移。
+channel = "stable"
+components = ["clippy", "rustfmt"]
