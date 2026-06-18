@@ -200,20 +200,9 @@ pub fn to_ping_result(r: &BedrockResult) -> PingResult {
 
 /// 解析 `host` / `host:port` / `[ipv6]` / `[ipv6]:port`,缺端口给 [`DEFAULT_PORT`]。
 fn parse_addr(addr: &str) -> (String, u16) {
-    let addr = addr.trim();
-    if let Some(rest) = addr.strip_prefix('[') {
-        if let Some((h, p)) = rest.split_once("]:") {
-            return (h.to_string(), p.parse().unwrap_or(DEFAULT_PORT));
-        }
-        if let Some(h) = rest.strip_suffix(']') {
-            return (h.to_string(), DEFAULT_PORT);
-        }
-    }
-    match addr.rsplit_once(':') {
-        // 仅当冒号左侧无冒号时才当作 host:port(避免把裸 IPv6 的末段当端口)
-        Some((h, p)) if !h.contains(':') => (h.to_string(), p.parse().unwrap_or(DEFAULT_PORT)),
-        _ => (addr.to_string(), DEFAULT_PORT),
-    }
+    let (host, port_str) = super::split_host_port(addr);
+    // 端口缺失或非法都退到默认端口(Bedrock 走尽力而为,不为地址格式报错)。
+    (host, port_str.and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT))
 }
 
 fn now_millis() -> i64 {

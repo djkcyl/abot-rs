@@ -431,26 +431,16 @@ fn read_frame_len_sync(s: &mut TcpStream) -> Result<i32, PingError> {
 
 /// 解析地址成 `(host, port, 是否显式给了端口)`。支持 `host`、`host:port`、`[ipv6]`、`[ipv6]:port`、裸 IPv6。
 fn parse_address(addr: &str) -> Result<(String, u16, bool), PingError> {
-    let addr = addr.trim();
-    if addr.is_empty() {
+    if addr.trim().is_empty() {
         return Err(PingError::Address("地址为空".into()));
     }
-    if let Some(rest) = addr.strip_prefix('[') {
-        let (ip, tail) =
-            rest.split_once(']').ok_or_else(|| PingError::Address("IPv6 缺 ]".into()))?;
-        if let Some(p) = tail.strip_prefix(':') {
+    match super::split_host_port(addr) {
+        (host, Some(p)) => {
             let port = p.parse().map_err(|_| PingError::Address("端口非法".into()))?;
-            return Ok((ip.to_string(), port, true));
+            Ok((host, port, true))
         }
-        return Ok((ip.to_string(), DEFAULT_PORT, false));
+        (host, None) => Ok((host, DEFAULT_PORT, false)),
     }
-    if addr.matches(':').count() == 1 {
-        let (h, p) = addr.split_once(':').unwrap();
-        let port = p.parse().map_err(|_| PingError::Address("端口非法".into()))?;
-        return Ok((h.to_string(), port, true));
-    }
-    // 无冒号(域名 / IPv4)或多冒号(裸 IPv6):都视作没给端口
-    Ok((addr.to_string(), DEFAULT_PORT, false))
 }
 
 /// 异步路径的目标解析:符合条件就查 SRV,命中则整体重定向并把 target 填进握手地址。

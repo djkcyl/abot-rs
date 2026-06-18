@@ -49,6 +49,25 @@ pub use render::{
 };
 pub use status::{Player, Players, StatusResponse, Version};
 
+/// 语法层拆地址:`host` / `host:port` / `[ipv6]` / `[ipv6]:port` / 裸 IPv6。
+/// 返回 `(host, 端口串)`,端口串为 `None` 表示没带端口段。只拆不解析 ——
+/// 默认端口与「端口串非法怎么办」交给调用方(Java 报错、Bedrock 静默兜底)。
+fn split_host_port(addr: &str) -> (String, Option<&str>) {
+    let addr = addr.trim();
+    if let Some(rest) = addr.strip_prefix('[') {
+        // `[ipv6]` 或 `[ipv6]:port`;缺 `]` 退化为整段当 host、无端口。
+        if let Some((ip, tail)) = rest.split_once(']') {
+            return (ip.to_string(), tail.strip_prefix(':'));
+        }
+        return (rest.to_string(), None);
+    }
+    // 恰好一个冒号才算 host:port;裸 IPv6(多冒号)整段当 host。
+    match addr.rsplit_once(':') {
+        Some((h, p)) if !h.contains(':') => (h.to_string(), Some(p)),
+        _ => (addr.to_string(), None),
+    }
+}
+
 /// 各热门版本的协议号(握手里发的、状态里上报的整数)。
 pub mod protocol_version {
     pub const V1_8_9: i32 = 47;
