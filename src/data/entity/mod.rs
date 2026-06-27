@@ -8,6 +8,7 @@
 //! 实体的字段缺省**不**自己建表，建表权属迁移，二者须保持一致。
 
 pub mod coin_log;
+pub mod game_item;
 pub mod group;
 pub mod identity;
 pub mod member_card;

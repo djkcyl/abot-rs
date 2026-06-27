@@ -41,7 +41,10 @@ impl MigratorTrait for Migrator {
         let mut plugins: Vec<Box<dyn MigrationTrait>> =
             nagisa::inventory::iter::<PluginMigration>.into_iter().map(|p| (p.0)()).collect();
         plugins.sort_by(|a, b| a.name().cmp(b.name()));
-        let mut all: Vec<Box<dyn MigrationTrait>> = vec![Box::new(m20260610_000001_create_core::Migration)];
+        let mut all: Vec<Box<dyn MigrationTrait>> = vec![
+            Box::new(m20260610_000001_create_core::Migration),
+            Box::new(m20260610_000005_create_game_item::Migration),
+        ];
         all.extend(plugins);
         all
     }
@@ -263,6 +266,54 @@ mod m20260610_000001_create_core {
             manager.drop_table(Table::drop().table(Identity::Table).if_exists().to_owned()).await?;
             manager.drop_table(Table::drop().table(Group::Table).if_exists().to_owned()).await?;
             manager.drop_table(Table::drop().table(User::Table).if_exists().to_owned()).await?;
+            Ok(())
+        }
+    }
+}
+
+/// 跨游戏共享物品背包 `game_item`(核心共享表;赛马道具 / 未来钓鱼种菜的物品都堆这里,
+/// 各游戏按 `item_id` 号段划分)。单独一支迁移,故已建库经新迁移名自动补建,不动 001。
+mod m20260610_000005_create_game_item {
+    use super::*;
+
+    /// `game_item` 列标识。
+    #[derive(DeriveIden)]
+    enum GameItem {
+        Table,
+        Uin,
+        ItemId,
+        Qty,
+    }
+
+    /// 这支迁移:建共享物品背包表。
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m20260610_000005_create_game_item"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .create_table(
+                    Table::create()
+                        .table(GameItem::Table)
+                        .if_not_exists()
+                        .col(ColumnDef::new(GameItem::Uin).big_integer().not_null())
+                        .col(ColumnDef::new(GameItem::ItemId).integer().not_null())
+                        .col(ColumnDef::new(GameItem::Qty).integer().not_null().default(0))
+                        .primary_key(Index::create().col(GameItem::Uin).col(GameItem::ItemId))
+                        .to_owned(),
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager.drop_table(Table::drop().table(GameItem::Table).if_exists().to_owned()).await?;
             Ok(())
         }
     }

@@ -21,6 +21,9 @@ pub mod user;
 // 与具体表无关的通用助手（如 get-or-create 的 `get_or_insert`）。
 pub mod util;
 
+// 跨游戏共享背包：在 game_item 表上带闸增减,各游戏插件按 item_id 号段产出/消耗同一个背包。
+pub mod inventory;
+
 // 每条消息把发送者账号昵称 / 群名片刷进核心缓存（供排行榜等「列出别人」显示真名）。
 pub mod identity;
 
