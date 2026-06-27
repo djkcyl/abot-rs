@@ -20,7 +20,13 @@ pub const DAILY_RESET: NaiveTime = match NaiveTime::from_hms_opt(4, 0, 0) {
 /// 当前业务日:本地时刻回拨 [`DAILY_RESET`] 距 0 点的时长后取自然日——4 点前算前一天。
 /// 签到去重/连签等「按日比较」用它。
 pub fn business_day() -> NaiveDate {
-    (Local::now().naive_local() - (DAILY_RESET - NaiveTime::MIN)).date()
+    business_day_of(Local::now().fixed_offset())
+}
+
+/// 任意带时区时刻所属的业务日(同 [`business_day`] 口径,4 点前算前一天)。比较两个时刻是否跨过日界
+/// (如「上次结算到现在是否过了 4 点重置点」)用它。
+pub fn business_day_of(dt: DateTime<FixedOffset>) -> NaiveDate {
+    (dt.with_timezone(&Local).naive_local() - (DAILY_RESET - NaiveTime::MIN)).date()
 }
 
 /// 当前业务日的起点时刻(业务日当天 [`DAILY_RESET`],带本地时区)。流水时间窗查询

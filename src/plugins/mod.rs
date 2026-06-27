@@ -20,6 +20,7 @@ pub mod admin;
 pub mod bottle;
 pub mod chatlog;
 pub mod help;
+pub mod horse;
 pub mod mcping;
 pub mod mydata;
 pub mod nickname;
