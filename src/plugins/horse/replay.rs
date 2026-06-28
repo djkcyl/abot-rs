@@ -16,7 +16,7 @@ const BUDGET_MS: u32 = 8_000; // 动画时长预算
 const HOLD_MS: u32 = 2_000; // 末帧停留
 const DELAY_MIN: u32 = 80;
 const DELAY_MAX: u32 = 150;
-const FRAME_CAP: usize = 90; // 帧数上界
+const FRAME_CAP: usize = 90;
 
 /// 调色板:0 泳道底、1 泳道底(隔行)、2 终点线,3.. 为各毛色。
 fn palette() -> Vec<u8> {

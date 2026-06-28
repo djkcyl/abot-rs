@@ -86,7 +86,7 @@ fn process_effects(effects: &mut Vec<ActiveEffect>, progress: f32, sta: i32, pos
         match e.item {
             Item::Boost => m.speed_mult *= consts::BOOST_MULT,
             Item::LateBoost if progress > consts::LATE_BOOST_PHASE => m.speed_mult *= consts::LATE_BOOST_MULT,
-            // 四叶草:领先时暴击加成减半(避免无脑翻盘)。
+            // 四叶草:领先时暴击加成减半。
             Item::Clover => m.crit_bonus += if leading { consts::CLOVER_CRIT_LEADING } else { consts::CLOVER_CRIT },
             // 定心丸:按 progress 线性补后程;高耐马减半。
             Item::StaminaTonic => {
@@ -184,8 +184,8 @@ pub struct RaceResult {
 /// 最大回合数(防呆上界)。
 const ROUND_CAP: usize = 300;
 
-/// 给一名参赛者(`owner` 下标)的道具播种效果:增益/防护挂自己,干扰挂对手。
-/// PvP 下绊马索/盯防锁**最强对手**(擒王),PvE 随机;盯防回合被目标敏捷「减时」削减;鸣枪按场上人数分档减速。
+/// 给一名参赛者(`owner` 下标)的道具播种:增益/防护挂自己,干扰挂对手。
+/// PvP 下绊马索/盯防锁最强对手,PvE 随机;盯防回合被目标敏捷减时;鸣枪按场上人数分档减速。
 fn seed_effects(
     effects: &mut [Vec<ActiveEffect>],
     owner: usize,
@@ -309,7 +309,7 @@ fn run_race(
             if inj_sev[i] > 0 {
                 rmod.speed_mult *= consts::INJURY_LIMP_MULT[(inj_sev[i] - 1) as usize];
             }
-            // 回马枪:挡下负面并把一次定身反弹给**当前领先者**(挂到其效果队列,下次结算生效);领先者即自己则随机挑。
+            // 回马枪:挡下负面并把一次定身反弹给当前领先者(挂到其效果队列,下次结算生效);领先者即自己则随机挑。
             if rmod.reflect {
                 let lead = (0..n).max_by(|&a, &b| pos[a].total_cmp(&pos[b])).unwrap_or(i);
                 let t = if lead == i { pick_other(i, n, &mut rng) } else { lead };
@@ -364,7 +364,7 @@ fn run_race(
         }
     }
 
-    // 名次:先冲线的在前(回合早优先),同回合按**不截顶**的越线量决胜(与下标无关,确定可复现);
+    // 名次:先冲线的在前(回合早优先),同回合按不截顶的越线量决胜(与下标无关,确定可复现);
     // 没冲线的按累计位移垫后(此时 raw_pos == pos)。
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| finish_round[a].cmp(&finish_round[b]).then(raw_pos[b].total_cmp(&raw_pos[a])));
@@ -407,7 +407,7 @@ fn roll_injury_severity(ctx: &InjuryCtx, rng: &mut StdRng) -> i16 {
     if ctx.races < consts::NEWBIE_INJURY_GRACE { 1 } else { sev }
 }
 
-/// 跑一场 **PvE** 比赛(玩家 + NPC)。`difficulty` 定赛道/对手强度,`player_ctx` 为玩家受伤上下文(NPC 不受伤),
+/// 跑一场 PvE 比赛(玩家 + NPC)。`difficulty` 定赛道/对手强度,`player_ctx` 为玩家受伤上下文(NPC 不受伤),
 /// `seed` 决定全程随机(可复现)。
 pub fn simulate(
     player: RunnerInfo,
@@ -430,7 +430,7 @@ pub fn simulate(
     let mut effects: Vec<Vec<ActiveEffect>> = vec![Vec::new(); n];
     seed_effects(&mut effects, 0, items, &runners, false, &mut rng);
     // NPC 使坏:每个 NPC 按难度概率向玩家(下标 0)丢一个绊马索(直接挂玩家槽,不走 seed_effects 的随机选靶)。
-    // 用定身(`skip` 是 bool、不叠加)而非减速,避免多个 NPC 的减速相乘把玩家压死——花式干扰是玩家的工具。
+    // 用定身(`skip` 是 bool、不叠加)而非减速,避免多个 NPC 的减速相乘把玩家压死。
     let neg_prob = consts::NPC_NEG_ITEM_PROB[difficulty.idx()];
     for _ in 1..n {
         if rng.random_bool(neg_prob) {
@@ -458,7 +458,7 @@ pub struct PvpEntrant {
     pub races: i32,
 }
 
-/// 跑一场 **PvP** 比赛(全真人,无 NPC)。各人道具按 owner 播种;名次用返回的 `order` 映射回各人。各人都掷局内受伤。
+/// 跑一场 PvP 比赛(全真人,无 NPC)。各人道具按 owner 播种;名次用返回的 `order` 映射回各人。各人都掷局内受伤。
 pub fn simulate_pvp(entrants: Vec<PvpEntrant>, track_len: f32, seed: u64) -> RaceResult {
     let mut rng = StdRng::seed_from_u64(seed);
     let n = entrants.len();
@@ -474,7 +474,7 @@ pub fn simulate_pvp(entrants: Vec<PvpEntrant>, track_len: f32, seed: u64) -> Rac
     for (owner, items) in items_per.iter().enumerate() {
         seed_effects(&mut effects, owner, items, &runners, true, &mut rng);
     }
-    // PvP 加整场手感系数:制造冷门、让真人对决有悬念。
+    // PvP 加整场手感系数:制造冷门。
     run_race(runners, effects, track_len, 0, consts::PVP_FORM_SIGMA, ctx, rng)
 }
 
@@ -519,7 +519,7 @@ fn step(
     let sta = stats[consts::Stat::Sta.idx()] as f32;
     let brs = stats[consts::Stat::Brs.idx()] as f32;
     let smax = consts::STAT_MAX as f32;
-    // 幸运不再进赛中公式(改赛后掉落/奖励,见 mod);速度凹响应见 [`SPEED_BASE_EXP`](consts::SPEED_BASE_EXP)。
+    // 幸运不进赛中公式(走赛后掉落/奖励,见 mod);速度凹响应见 [`SPEED_BASE_EXP`](consts::SPEED_BASE_EXP)。
 
     let progress = (pos / track_len).clamp(0.0, 1.0);
     // 速度凹响应:线性会让高速度独大,凹曲线给边际递减。
@@ -532,7 +532,7 @@ fn step(
         }
         base *= 1.0 + boost;
     }
-    // 「疾风」特性:前半程速度加成(短跑流核心,后半不生效→不助长长赛道独大)。
+    // 「疾风」特性:前半程速度加成(后半不生效,不助长长赛道独大)。
     if Trait::Gale.in_mask(traits) && progress < consts::TRAIT_GALE_PHASE {
         base *= consts::TRAIT_GALE_MULT;
     }
@@ -540,7 +540,7 @@ fn step(
     if Trait::Tenacious.in_mask(traits) {
         base *= consts::TRAIT_TENACITY_SPEED_MULT;
     }
-    // 爆发直接位移:让爆发成为可练的「暴击型二速」(非纯暴击概率)。
+    // 爆发直接进位移(不只走暴击概率)。
     base *= 1.0 + brs / consts::STAT_EFFECT_REF as f32 * consts::BURST_BASE_SCALE;
     // 后程系数:progress 越大且耐力越低掉速越狠;「后程之王」特性后半程加成;「定心丸」道具补后程(rmod.stamina_bonus)。
     let late = if Trait::LateSurge.in_mask(traits) && progress > 0.5 { consts::TRAIT_LATE_BONUS } else { 0.0 };
@@ -548,7 +548,7 @@ fn step(
         + late
         + rmod.stamina_bonus)
         .clamp(consts::STAMINA_FACTOR_MIN, consts::STAMINA_FACTOR_MAX);
-    // 暴击:爆发主驱 + 四叶草 + 落后追赶(挂自身爆发=翻盘维;「追击者」特性再放大)+「暴击体质」特性。幸运已退出。
+    // 暴击:爆发主驱 + 四叶草 + 落后追赶(挂自身爆发,「追击者」特性再放大)+「暴击体质」特性。
     let mut comeback = ((leader_pos - pos) / track_len).clamp(0.0, 1.0) as f64
         * (consts::COMEBACK_BASE + brs as f64 / consts::STAT_EFFECT_REF as f64 * consts::COMEBACK_BRS_SCALE);
     if Trait::Pursuer.in_mask(traits) {
@@ -562,7 +562,7 @@ fn step(
         .clamp(0.0, consts::CRIT_PROB_CAP);
     fx.crit = rng.random_bool(crit_prob);
     let crit_mult = if fx.crit { consts::BURST_CRIT_MULT } else { 1.0 };
-    // 抖动:「韧者」特性 +「稳行」道具(rmod.jitter_mult)减幅;幸运不再收敛抖动。
+    // 抖动:「韧者」特性 +「稳行」道具(rmod.jitter_mult)减幅。
     let tenacity = if Trait::Tenacious.in_mask(traits) { consts::TRAIT_JITTER_MULT } else { 1.0 };
     let jitter_amp = base * consts::JITTER_COEFF * tenacity * rmod.jitter_mult;
     let jitter = (rng.random_range(0.0..1.0) - 0.5) * 2.0 * jitter_amp;
@@ -573,7 +573,7 @@ fn step(
 /// NPC 名字池。
 const NPC_NAMES: [&str; 10] = ["影疾", "踏雪", "黑旋风", "赤兔", "追风", "乌云", "白蹄乌", "流星", "御风", "霜蹄"];
 
-/// 玩家「实力」= **前四维(速/耐/爆/敏)均值**,供按实力缩放名次奖励。刻意**排除幸运**:它在名次奖已有独立
+/// 玩家「实力」= 前四维(速/耐/爆/敏)均值,供按实力缩放名次奖励。刻意排除幸运:它在名次奖已有独立
 /// `luck_mult` 通道(见 [`mod`](super) 比赛结算),计入此处会双计。全维相等的马前四维均值 = 五维均值,故
 /// [`REWARD_POWER_REF`](consts::REWARD_POWER_REF) 标定不变;NPC 难度按逐维镜像生成、不经此函数。
 pub fn player_power(stats: &[i32; consts::STAT_COUNT]) -> f32 {
@@ -613,9 +613,171 @@ pub fn reward_for(place: usize, diff: Difficulty, power: f32) -> i64 {
         .unwrap_or(0)
 }
 
+// —— PvP 段位赔率结算(无匹配·只开房;马段位 ELO + 即时 power 定赔率;马主段位纯荣誉)——
+
+/// 各马隐含赢率:组合分 `C_i = elo_i + POWER_TO_ELO×(power_i − REWARD_POWER_REF)`,`p = softmax(C / S)`,
+/// `S = ELO_SCALE / ln(10)`。`powers` 已含按马战意(PvP-only)乘子。返回归一概率(Σ=1)。
+pub fn pvp_win_probs(elos: &[i32], powers: &[f32]) -> Vec<f64> {
+    let n = elos.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let s = consts::ELO_SCALE / std::f64::consts::LN_10;
+    let c: Vec<f64> = elos
+        .iter()
+        .zip(powers)
+        .map(|(&e, &pw)| e as f64 + consts::POWER_TO_ELO * (pw as f64 - consts::REWARD_POWER_REF as f64))
+        .collect();
+    let mx = c.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let ex: Vec<f64> = c.iter().map(|&ci| ((ci - mx) / s).exp()).collect();
+    let sum: f64 = ex.iter().sum();
+    if sum <= 0.0 {
+        return vec![1.0 / n as f64; n];
+    }
+    ex.iter().map(|&e| e / sum).collect()
+}
+
+/// Harville:由赢率 `p` 递推前三名概率 `(P1, P2, P3)`(N≤8,O(N³) 可接受)。
+fn harville_top3(p: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let n = p.len();
+    let p1 = p.to_vec();
+    let mut p2 = vec![0.0; n];
+    let mut p3 = vec![0.0; n];
+    for i in 0..n {
+        for j in 0..n {
+            if j == i {
+                continue;
+            }
+            let dj = 1.0 - p[j];
+            if dj <= 1e-12 {
+                continue;
+            }
+            p2[i] += p[j] * (p[i] / dj); // j 第一、i 第二
+            for k in 0..n {
+                if k == i || k == j {
+                    continue;
+                }
+                let djk = 1.0 - p[j] - p[k];
+                if djk <= 1e-12 {
+                    continue;
+                }
+                p3[i] += p[j] * (p[k] / dj) * (p[i] / djk); // j 第一、k 第二、i 第三
+            }
+        }
+    }
+    (p1, p2, p3)
+}
+
+/// PvP 赔率派彩(广义 waterfill 单次联合投影):零和守恒(Σ=q)、倒扣有上限(floor)。
+/// `p` 隐含赢率、`order[r]` = 第 r 名的下标、`stakes` 各注、`q` 派彩总额(= pool − rake)。
+/// 返回各马派彩 `gross_i`(按下标;Σ=q、各 ≥ floor_i;奖圈 floor = (1−REVCAP)×stake、圈外 0 → 倒扣 ≤75%/100%)。
+/// 严禁两步法(先填到 0 再事后钳 floor 会凭空铸币):此处只用单条 `g_i = max(floor_i, base_i − λ)` 的 λ 二分。
+pub fn pvp_payout(p: &[f64], order: &[usize], stakes: &[i64], q: i64) -> Vec<i64> {
+    let n = p.len();
+    if n == 0 || q <= 0 {
+        return vec![0; n];
+    }
+    let psum: f64 = p.iter().sum();
+    let p: Vec<f64> = if psum > 0.0 { p.iter().map(|&x| x / psum).collect() } else { vec![1.0 / n as f64; n] };
+    let (p1, p2, p3) = harville_top3(&p);
+    let pf = consts::PVP_PAYOUT_FACTOR; // [0.6,0.25,0.15],Σ=1
+    let fair_e: Vec<f64> = (0..n).map(|i| p1[i] * pf[0] as f64 + p2[i] * pf[1] as f64 + p3[i] * pf[2] as f64).collect();
+    let erank: Vec<f64> = (0..n)
+        .map(|i| 1.0 + (0..n).filter(|&j| j != i).map(|j| p[j] / (p[i] + p[j]).max(1e-12)).sum::<f64>())
+        .collect();
+    let mut rank_of = vec![0usize; n];
+    for (r, &idx) in order.iter().enumerate() {
+        rank_of[idx] = r + 1;
+    }
+    let place_value = |r: usize| -> f64 { if r >= 1 && r <= pf.len() { pf[r - 1] as f64 } else { 0.0 } };
+    // raw_i = 1/N + S1×(pf_i − E_i) + S2×(Erank_i − rank_i)/N(三项各自 Σ=1/0/0 → Σ raw = 1)。
+    let raw: Vec<f64> = (0..n)
+        .map(|i| {
+            1.0 / n as f64
+                + consts::PVP_ODDS_S1 * (place_value(rank_of[i]) - fair_e[i])
+                + consts::PVP_ODDS_S2 * (erank[i] - rank_of[i] as f64) / n as f64
+        })
+        .collect();
+    let base: Vec<f64> = raw.iter().map(|&r| r * q as f64).collect();
+    let floor: Vec<f64> = (0..n)
+        .map(|i| if rank_of[i] <= pf.len() { (1.0 - consts::PVP_REVCAP_INRING) * stakes[i] as f64 } else { 0.0 })
+        .collect();
+    // λ 二分:g_i = max(floor_i, base_i − λ)。λ=0 时 Σ ≥ q(Σbase=q、max≥base);λ↑ Σ 单减;Σfloor ≤ q 保可行。
+    let sum_at = |lam: f64| -> f64 { (0..n).map(|i| floor[i].max(base[i] - lam)).sum::<f64>() };
+    let (mut lo, mut hi) = (0.0_f64, base.iter().cloned().fold(0.0_f64, f64::max).max(1.0));
+    for _ in 0..100 {
+        let mid = (lo + hi) / 2.0;
+        if sum_at(mid) > q as f64 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let _ = lo;
+    let lam = hi;
+    let g: Vec<f64> = (0..n).map(|i| floor[i].max(base[i] - lam)).collect();
+    // 取整,零头给冠军,保证 Σ == q(守恒)。
+    let mut gi: Vec<i64> = g.iter().map(|&x| x.round().max(0.0) as i64).collect();
+    let diff = q - gi.iter().sum::<i64>();
+    if let Some(&w) = order.first() {
+        gi[w] = (gi[w] + diff).max(0);
+    }
+    gi
+}
+
+/// 单场 ELO 增量(按下标):`ΔR_i = K_i/(N−1) × Σ_{j≠i}(S_ij − E_ij)`,`S_ij = [rank_i<rank_j]`,
+/// `E_ij = 1/(1+10^((R_j−R_i)/ELO_SCALE))`。`ranks[i]` 名次(1-based),`k[i]` 该马本轨 K 值。
+pub fn elo_deltas(ranks: &[usize], elos: &[i32], k: &[f64]) -> Vec<i32> {
+    let n = elos.len();
+    if n < 2 {
+        return vec![0; n];
+    }
+    (0..n)
+        .map(|i| {
+            let s: f64 = (0..n)
+                .filter(|&j| j != i)
+                .map(|j| {
+                    let sij = if ranks[i] < ranks[j] { 1.0 } else { 0.0 };
+                    let eij = 1.0 / (1.0 + 10f64.powf((elos[j] - elos[i]) as f64 / consts::ELO_SCALE));
+                    sij - eij
+                })
+                .sum();
+            (k[i] / (n - 1) as f64 * s).round() as i32
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 赔率派彩:零和守恒(Σ=q)、奖圈倒扣不超 REVCAP、冷门夺冠净赚、强马爆冷重亏。
+    #[test]
+    fn pvp_payout_conserves_and_caps() {
+        let p = [0.7, 0.2, 0.1]; // 强(idx0)/中/弱
+        let stakes = [100i64, 100, 100];
+        let q = 285; // pool 300 − 5% rake
+        let g = pvp_payout(&p, &[0, 1, 2], &stakes, q); // 强马夺冠
+        assert_eq!(g.iter().sum::<i64>(), q, "守恒");
+        assert!(g.iter().all(|&x| x >= 0));
+        assert!(g[0] - 100 < 120, "热门夺冠不暴利: {}", g[0] - 100);
+        let g2 = pvp_payout(&p, &[2, 1, 0], &stakes, q); // 强马(idx0)垫底(第3名,奖圈内 floor=25)
+        assert_eq!(g2.iter().sum::<i64>(), q, "守恒");
+        assert!(g2[0] >= 25, "奖圈倒扣不超 75%(≥floor25): {}", g2[0]);
+        assert!(g2[0] <= 75, "强马爆冷应重亏: {}", g2[0]);
+        assert!(g2[2] > 100, "冷门夺冠应净赚: {}", g2[2]);
+    }
+
+    /// 圈外(第4名起)floor=0,可倒扣满注。
+    #[test]
+    fn pvp_payout_out_of_ring_floor_zero() {
+        let p = [0.4, 0.3, 0.2, 0.1];
+        let stakes = [50i64; 4];
+        let q = (200.0 * 0.95) as i64; // 190
+        let g = pvp_payout(&p, &[1, 2, 3, 0], &stakes, q); // 强马 idx0 垫底(第4名,圈外)
+        assert_eq!(g.iter().sum::<i64>(), q);
+        assert!(g[0] >= 0 && g[0] < 50, "圈外强马爆冷可净亏(gross<stake): {}", g[0]);
+    }
 
     fn info(name: &str) -> RunnerInfo {
         RunnerInfo { name: name.to_string(), owner: "主人".into(), color: 0, is_npc: false }
@@ -682,7 +844,7 @@ mod tests {
         assert!(buffed < bare - 0.1, "定心丸+终盘冲刺应明显改善名次: {buffed} vs {bare}");
     }
 
-    /// 敏捷=干扰场工具维:大师 PvE(NPC 高频投绊马索)下,高敏捷靠闪避明显比低敏捷夺冠更多。
+    /// 敏捷靠闪避:大师 PvE(NPC 高频投绊马索)下,高敏捷明显比低敏捷夺冠更多。
     /// (单场闪避效应小,清水/2 人局会被手感噪声淹没,故用干扰密集的大师 + 大样本测。)
     #[test]
     fn agility_dodges_negatives() {
@@ -758,7 +920,7 @@ mod tests {
         };
         for p in [60, 180] {
             let s = [p, p, p, p, p];
-            // 阈值 0.74:去掉同回合冲线的下标偏袒(玩家=idx0 不再吃并列优势)后弱档简单赛胜率略降,放宽反映新口径,仍是「稳赢」。
+            // 阈值 0.74:不截顶决胜去掉玩家=idx0 的并列偏袒后,弱档简单赛胜率略降,放宽后仍属「稳赢」。
             assert!(wr(s, Difficulty::Easy) > 0.74, "简单应稳赢(power {p})");
             assert!(wr(s, Difficulty::Master) < 0.30, "大师应是豪赌(power {p})");
             let nm = wr(s, Difficulty::Normal);

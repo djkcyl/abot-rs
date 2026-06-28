@@ -27,7 +27,6 @@ plugin! {
     description = "养成你的赛马，训练提升属性、参加比赛赢奖励，出关键帧和整场 GIF 回放。",
 }
 
-/// 领养给新马随机起的名字池。
 const ADOPT_NAMES: [&str; 12] =
     ["疾风", "踏云", "逐日", "奔霄", "紫电", "流光", "骁勇", "越影", "追星", "御风", "踏雪", "惊鸿"];
 
@@ -35,7 +34,6 @@ fn fresh_rng() -> StdRng {
     StdRng::seed_from_u64(rand::random::<u64>())
 }
 
-/// `赛马` —— 总览帮助。
 #[command(
     "赛马",
     description = "赛马养成总览",
@@ -81,7 +79,7 @@ async fn overview(reply: Reply, user: AUser) -> HandlerResult {
     Ok(())
 }
 
-/// `赛马玩法` —— 把 README 渲成一张图文玩法说明发出。
+/// 把 README 渲成图文玩法说明发出。
 #[command(
     "赛马玩法",
     description = "看赛马完整玩法",
@@ -93,13 +91,17 @@ async fn guide(reply: Reply, user: AUser) -> HandlerResult {
     Ok(())
 }
 
-/// `赛马领养` —— 马厩为空时免费领一匹初代马。
 #[command(
     "赛马领养",
     description = "免费领第一匹马",
     usage = "马厩为空时发「赛马领养」,免费领一匹初代马,另送一笔启动金。"
 )]
-async fn adopt(reply: Reply, mut user: AUser) -> HandlerResult {
+async fn adopt(reply: Reply, mut user: AUser, session: Session) -> HandlerResult {
+    // 同人单飞:挡并发领养双发首马 + 双发启动金 + 重复 acq_seq(领养一生一次的前提)。
+    let Some(_guard) = session.single_flight_user() else {
+        reply.reply("上一条还在处理,稍等").await?;
+        return Ok(());
+    };
     let db = user.db().clone();
     if logic::stable_count(&db, user.uin()).await? > 0 {
         reply.reply("你已经有马了,发「赛马马厩」看看,或之后用繁殖再要新的").await?;
@@ -145,7 +147,6 @@ async fn adopt(reply: Reply, mut user: AUser) -> HandlerResult {
     Ok(())
 }
 
-/// `赛马马厩` —— 看自己的马厩。
 #[command("赛马马厩", description = "看你的所有马", usage = "发「赛马马厩」,出一张马厩卡列出你的所有马。")]
 async fn stable(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
     let db = user.db().clone();
@@ -153,8 +154,9 @@ async fn stable(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
     let horses: Vec<_> = logic::stable(&db, user.uin()).await?.iter().map(logic::project).collect();
     let owner = crate::plugins::self_shown_name(&user, &m).text;
     let title = logic::user_title(&db, user.uin()).await?;
+    let cap = logic::effective_stable_cap(&db, user.uin()).await?;
     let theme = user.render_theme();
-    let card = render::stable_card(&owner, title, &horses, &theme)?;
+    let card = render::stable_card(&owner, title, &horses, cap, &theme)?;
     reply.msg().image_bytes(card).quote().await?;
     Ok(())
 }
@@ -187,7 +189,6 @@ async fn owned_horse(
 /// `owned_horse` 的返回:`Ok(Some)` 拿到马、`Ok(None)` 已回过原因、`Err` 上抛。
 type HandlerResult2<T> = nagisa::Result<Option<T>>;
 
-/// `赛马查 <编号>` —— 看某匹马详情。
 #[command("赛马查", description = "看某匹马的详情", usage = "发「赛马查 <编号>」,出该马的属性卡。")]
 async fn inspect(reply: Reply, user: AUser, args: ArgText) -> HandlerResult {
     let Some(id) = parse_id(&args.0) else {
@@ -207,7 +208,6 @@ async fn inspect(reply: Reply, user: AUser, args: ArgText) -> HandlerResult {
     Ok(())
 }
 
-/// `赛马训练 <编号> <项> [饲料]` —— 花币 + 体力练一项属性,随机产出;可吃饲料提高好值概率。
 #[command(
     "赛马训练",
     description = "花币练一项属性",
@@ -241,18 +241,20 @@ async fn train(reply: Reply, mut user: AUser, session: Session, args: ArgText) -
         return Ok(());
     }
     logic::settle_state(&db, &mut horse).await?;
+    logic::settle_stable_tax(&db, &mut user).await?;
     if horse.vitality < consts::VIT_TRAIN {
         reply.reply(format!("这马累了,歇会儿再来(体力 {}/{})", horse.vitality, consts::VIT_MAX)).await?;
         return Ok(());
     }
     let today = crate::data::util::business_day();
-    let cost = logic::train_cost(&horse, stat, today);
+    let meta = logic::player_meta_of(&db, user.uin()).await?;
+    let cost = logic::apply_discount(logic::train_cost(&horse, stat, today), logic::train_cost_discount(&meta));
     if !user.pay(cost, "赛马·训练").await? {
         reply.reply("训练得花点游戏币,你余额不够").await?;
         return Ok(());
     }
 
-    // 带闸扣训练道具(饲料/专注/集训/破限),没有则当没带。
+    // 带闸扣训练道具,没有则当没带。
     let aid_used = match train_item {
         Some(f) if logic::take_item(&db, user.uin(), f, 1).await? => Some(f),
         _ => None,
@@ -295,12 +297,10 @@ async fn train(reply: Reply, mut user: AUser, session: Session, args: ArgText) -
     Ok(())
 }
 
-/// 实况最多播几帧。
 const LIVE_FRAMES: usize = 3;
-/// 实况帧之间的停顿。
 const LIVE_FRAME_GAP: Duration = Duration::from_millis(550);
 
-/// 从关键帧里均匀挑最多 `max` 个回合(含起跑与冲线)做实况播报。
+/// 从关键帧均匀挑最多 `max` 个回合(含起跑与冲线)。
 fn pick_frames(key_rounds: &[usize], max: usize) -> Vec<usize> {
     if max <= 1 || key_rounds.len() <= max {
         return key_rounds.iter().take(max.max(1)).copied().collect();
@@ -313,11 +313,10 @@ fn pick_frames(key_rounds: &[usize], max: usize) -> Vec<usize> {
     out
 }
 
-/// `赛马比赛 <编号> [难度]` —— 发起对 NPC 的 PvE 比赛。
 #[command(
     "赛马比赛",
     description = "跑一场 PvE 比赛赢奖励",
-    usage = "发「赛马比赛 <编号> [简单/普通/困难/大师]」,对几匹 NPC 跑一场。难度 = **下注风险**:对手按你的实力\
+    usage = "发「赛马比赛 <编号> [简单/普通/困难/大师]」,对几匹 NPC 跑一场。难度 = 下注风险:对手按你的实力\
 缩放,简单=对手弱于你(稳赢小赚)、大师=对手强于你(豪赌大彩头),不论你多强都是真比赛。越强的马同档赢得越多。\
 会发过程帧、结算卡和整场 GIF;名次越高奖励越多,花报名费和体力。"
 )]
@@ -356,6 +355,7 @@ async fn race_cmd(reply: Reply, mut user: AUser, session: Session, m: MessageEve
     // 不指定难度:首场默认简单(与新手引导一致),之后默认普通。
     let difficulty = difficulty.unwrap_or(if horse.races == 0 { Difficulty::Easy } else { Difficulty::Normal });
     logic::settle_state(&db, &mut horse).await?;
+    logic::settle_stable_tax(&db, &mut user).await?; // 惰性厩养税:当日首次交互一并结
     if logic::is_injured(&horse) {
         let mins = logic::injury_remaining(&horse).unwrap_or(0);
         reply
@@ -372,13 +372,20 @@ async fn race_cmd(reply: Reply, mut user: AUser, session: Session, m: MessageEve
         reply.reply(format!("体力不够跑一场(体力 {}/{}),歇会儿再来", horse.vitality, consts::VIT_MAX)).await?;
         return Ok(());
     }
-    // 报名费随当日已赛场次递增。
-    let fee = difficulty.entry_fee()
-        + difficulty.entry_step() * logic::races_today(&horse, crate::data::util::business_day());
+    // 报名费随当日已赛账号场次递增,并按该马实力系数缩放(强马自付:谁奖励翻倍谁报名费也翻倍,净产出趋平)。
+    // power_factor 复用奖励侧同一 clamp(power/REWARD_POWER_REF, REWARD_POWER_CLAMP);power=前四维均值(点数口径)。
+    let today = crate::data::util::business_day();
+    let acct_races = logic::account_races_today(&db, user.uin(), today).await?;
+    let pf = (race::player_power(&logic::stats_of(&horse)) / consts::REWARD_POWER_REF)
+        .clamp(consts::REWARD_POWER_CLAMP.0, consts::REWARD_POWER_CLAMP.1);
+    let base_fee = difficulty.entry_fee() + difficulty.entry_step() * acct_races as i64;
+    let fee = (base_fee as f32 * pf.powf(consts::POWER_FEE_EXP)).round() as i64;
     if !user.pay(fee, "赛马·报名").await? {
         reply.reply("报名得花点币,你余额不够").await?;
         return Ok(());
     }
+    // 报名成功才推进账号级日内场次(原子;失败/余额不足不污染计数)。
+    logic::bump_account_races_today(&db, user.uin(), today).await?;
 
     // 带闸扣道具,没有的略过并提示。
     let mut items: Vec<Item> = Vec::new();
@@ -421,7 +428,6 @@ async fn race_cmd(reply: Reply, mut user: AUser, session: Session, m: MessageEve
     // 幸运由下方 luck_mult 另算,不在 player_power 里双计。
     let stats = logic::stats_of(&horse); // 点数口径(列存厘点)
     let base_reward = race::reward_for(place, difficulty, race::player_power(&stats));
-    // 幸运给名次奖一点加成(幸运=产出维的收益侧)。
     let luck_mult = 1.0 + (stats[Stat::Luk.idx()] as f32 / consts::LUCK_REWARD_DIV).clamp(0.0, consts::LUCK_REWARD_CAP);
     let reward = (base_reward as f32 * luck_mult).round() as i64;
     logic::finish_race(&db, &mut horse, won).await?;
@@ -441,7 +447,7 @@ async fn race_cmd(reply: Reply, mut user: AUser, session: Session, m: MessageEve
     if injury > 0 {
         logic::set_injury(&db, &mut horse, injury).await?;
     }
-    // 赛后掉落(幸运产出维):命中则入袋,溢出折币。
+    // 赛后掉落:命中入袋,溢出折币。
     let drop = logic::roll_drop(stats[Stat::Luk.idx()], consts::Trait::Fortuitous.in_mask(horse.traits), 1.0, &mut rng);
     if let Some(it) = drop {
         let overflow = logic::add_item(&db, user.uin(), it, 1).await?;
@@ -504,7 +510,6 @@ async fn award_achievements(reply: &Reply, user: &mut AUser) -> nagisa::Result<(
     Ok(())
 }
 
-/// `赛马成就` —— 看成就与称号(顺带补发漏算的成就)。
 #[command(
     "赛马成就",
     description = "看赛马成就与称号",
@@ -522,7 +527,6 @@ async fn achievements(reply: Reply, mut user: AUser, m: MessageEvent) -> Handler
     Ok(())
 }
 
-/// `赛马背包` —— 看持有的道具。
 #[command("赛马背包", description = "看你的道具和饲料", usage = "发「赛马背包」,列出你持有的比赛道具和训练饲料。")]
 async fn backpack(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
     let db = user.db().clone();
@@ -533,7 +537,6 @@ async fn backpack(reply: Reply, user: AUser, m: MessageEvent) -> HandlerResult {
     Ok(())
 }
 
-/// `赛马繁殖 <公> <母>` —— 用两匹马繁殖一匹后代。
 #[command(
     "赛马繁殖",
     description = "用两匹马繁殖后代",
@@ -562,7 +565,6 @@ async fn breed(reply: Reply, mut user: AUser, session: Session, args: ArgText) -
     let Some(ha) = owned_horse(&reply, &db, user.uin(), a).await? else { return Ok(()) };
     let Some(hb) = owned_horse(&reply, &db, user.uin(), b).await? else { return Ok(()) };
 
-    // 定公母。
     let (mut father, mut mother) = match (ha.sex, hb.sex) {
         (0, 1) => (ha, hb),
         (1, 0) => (hb, ha),
@@ -574,13 +576,32 @@ async fn breed(reply: Reply, mut user: AUser, session: Session, args: ArgText) -
     // 结算到期状态后查伤:带伤的马先治好再配。
     logic::settle_state(&db, &mut father).await?;
     logic::settle_state(&db, &mut mother).await?;
+    logic::settle_stable_tax(&db, &mut user).await?;
+    // 预算两亲本是否库内种马(复用:退役校验 / 作种上限 / ×1.5 费)。
+    let father_stud = logic::is_in_lib(&db, user.uin(), father.id).await?;
+    let mother_stud = logic::is_in_lib(&db, user.uin(), mother.id).await?;
+    // 退役的马只能从血统库当种马配(下面 ×1.5);普通退役马(status=2 但不在库)不能直接繁殖——
+    // 否则就能「领了退役金、又白嫖基因、还绕过存种费」三头占。
+    for (h, label, in_lib) in [(&father, "公马", father_stud), (&mother, "母马", mother_stud)] {
+        if h.status == 2 && !in_lib {
+            reply.reply(format!("{label}「{}」已退役,想用它的血统得先「赛马存种」存进血统库再配", h.name)).await?;
+            return Ok(());
+        }
+    }
     if logic::is_injured(&father) || logic::is_injured(&mother) {
         reply.reply("有马还带着伤,先治好再配").await?;
         return Ok(());
     }
-    for h in [&father, &mother] {
-        if h.breed_count >= consts::BREED_COUNT_MAX {
-            reply.reply(format!("「{}」作种次数到上限了,换一匹来配(到顶的可退役换币)", h.name)).await?;
+    // 作种上限:库内种马更耐用(STUD_BREED_COUNT_MAX),普通马 BREED_COUNT_MAX;续种符仍可在此基础上加。
+    for (h, in_lib) in [(&father, father_stud), (&mother, mother_stud)] {
+        let cap = if in_lib { consts::STUD_BREED_COUNT_MAX } else { consts::BREED_COUNT_MAX };
+        if h.breed_count >= cap {
+            reply
+                .reply(format!(
+                    "「{}」作种次数到上限({}/{cap})了,换一匹来配(种马也有上限,续种符可再加)",
+                    h.name, h.breed_count
+                ))
+                .await?;
             return Ok(());
         }
     }
@@ -592,12 +613,19 @@ async fn breed(reply: Reply, mut user: AUser, session: Session, args: ArgText) -
         reply.reply(format!("母马还在休养,{} 小时 {} 分后能再繁殖", mins / 60, mins % 60)).await?;
         return Ok(());
     }
-    if logic::stable_active_count(&db, user.uin()).await? >= consts::STABLE_CAP {
+    // 满厩口径与抽卡一致:用动态容量(含仓库设施扩容),否则升了仓库还被繁殖拦下。
+    if logic::stable_active_count(&db, user.uin()).await? >= logic::effective_stable_cap(&db, user.uin()).await? {
         reply.reply("在厩满了,先退役一匹再繁殖(退役不占格)").await?;
         return Ok(());
     }
     let incest = logic::is_incest(&db, father.id, mother.id, consts::BREED_INCEST_DEPTH).await?;
-    let cost = logic::breed_cost(&father, &mother);
+    let bmeta = logic::player_meta_of(&db, user.uin()).await?;
+    // 用血统库种马配种:繁殖费 ×1.5(种马作父不受母马冷却,作种上限更高但仍有顶)。
+    let mut base = logic::breed_cost(&father, &mother);
+    if father_stud || mother_stud {
+        base = (base as f32 * consts::STUD_BREED_SURCHARGE).round() as i64;
+    }
+    let cost = logic::apply_discount(base, logic::breed_cost_discount(&bmeta));
     // 星辉石先于扣费取下:没有就回原因不扣费(免静默降级产普通胎);扣费失败再把石头退回(不吞石头)。
     let star_stone = if want_star_stone {
         if !logic::take_item(&db, user.uin(), Item::StarStone, 1).await? {
@@ -654,7 +682,6 @@ async fn breed(reply: Reply, mut user: AUser, session: Session, args: ArgText) -
     Ok(())
 }
 
-/// `赛马改名 <编号> <新名>` —— 花币给马改名。
 #[command("赛马改名", description = "给马改名", usage = "发「赛马改名 <编号> <新名字>」,花游戏币给马改个名。")]
 async fn rename(reply: Reply, mut user: AUser, args: ArgText) -> HandlerResult {
     let rest = args.0.trim();
@@ -669,7 +696,7 @@ async fn rename(reply: Reply, mut user: AUser, args: ArgText) -> HandlerResult {
     let name = name.trim();
     let chars = name.chars().count();
     if chars == 0 || chars > consts::NAME_MAX_CHARS {
-        reply.reply(format!("名字要 1 到 {} 个字", consts::NAME_MAX_CHARS)).await?;
+        reply.reply("名字空着了或太长,换一个").await?;
         return Ok(());
     }
     let db = user.db().clone();
@@ -685,7 +712,6 @@ async fn rename(reply: Reply, mut user: AUser, args: ArgText) -> HandlerResult {
     Ok(())
 }
 
-/// `赛马退役 <编号>` —— 二次确认后退役一匹马领回馈。
 #[command(
     "赛马退役",
     description = "退役一匹马领回馈",
@@ -734,7 +760,6 @@ async fn retire(reply: Reply, mut user: AUser, session: Session, args: ArgText) 
     Ok(())
 }
 
-/// `赛马抽卡` / `赛马十连` —— 花币抽道具或新马。
 #[command(
     "赛马抽卡",
     description = "单抽:出道具或新马",
@@ -753,7 +778,6 @@ async fn gacha_ten(reply: Reply, user: AUser, session: Session) -> HandlerResult
     do_gacha(reply, user, session, 10, false).await
 }
 
-/// `赛马马池` —— 专抽马的卡池(贵但大概率出马)。
 #[command(
     "赛马马池",
     description = "马池单抽:大概率出马",
@@ -763,7 +787,6 @@ async fn gacha_horse_single(reply: Reply, user: AUser, session: Session) -> Hand
     do_gacha(reply, user, session, 1, true).await
 }
 
-/// `赛马马池十连` —— 马池十连。
 #[command(
     "赛马马池十连",
     description = "马池十连",
@@ -782,8 +805,9 @@ async fn grant_horse(
     stable_n: &mut usize,
     lines: &mut Vec<render::GachaLine>,
     refund: &mut i64,
+    cap: usize,
 ) -> nagisa::Result<()> {
-    if *stable_n < consts::STABLE_CAP {
+    if *stable_n < cap {
         let name = ADOPT_NAMES[rand::random::<u32>() as usize % ADOPT_NAMES.len()];
         let color = (rand::random::<u32>() % consts::COLOR_COUNT as u32) as i16;
         let sex = (rand::random::<u32>() % 2) as i16;
@@ -805,33 +829,48 @@ async fn grant_horse(
         *stable_n += 1;
         lines.push(render::GachaLine { text: format!("{rarity}★ 新马 · {name} #{}", foal.id), rare: true });
     } else {
-        *refund += consts::GACHA_HORSE_FULL_REFUND;
+        let r = (birth.rarity.clamp(consts::RARITY_MIN, consts::RARITY_MAX) - 1) as usize;
+        *refund += consts::GACHA_HORSE_FULL_REFUND_BY_RARITY[r];
         lines.push(render::GachaLine { text: "出马但马厩满,折成了金币".to_string(), rare: false });
     }
     Ok(())
 }
 
 /// 抽卡公共流程:扣币 → 逐抽产出(道具入袋 / 马入厩,溢出折币)→ 落保底 → 出结果卡。`horse_pool` 走马池。
-/// 两池共用同一 ★3+ 保底计数。同人单飞:挡并发抽卡丢保底/绕在厩上限多发马。
+/// 两池各自独立 ★3+ 保底计数。同人单飞:挡并发抽卡丢保底/绕在厩上限多发马。
 async fn do_gacha(reply: Reply, mut user: AUser, session: Session, count: usize, horse_pool: bool) -> HandlerResult {
     let Some(_guard) = session.single_flight_user() else {
         reply.reply("上一抽还在处理,稍等").await?;
         return Ok(());
     };
-    let (cost, class_weights, horse_rarity) = if horse_pool {
+    let db = user.db().clone();
+    let uin = user.uin();
+    logic::settle_stable_tax(&db, &mut user).await?; // 惰性厩养税(抽卡前结一次)
+    let cap = logic::effective_stable_cap(&db, uin).await?;
+    // 马池抽到的马只能入厩(满则没处放)——抽前拦截、不扣币;标准池仍允许(满厩出马按星折币)。
+    if horse_pool && logic::stable_active_count(&db, uin).await? >= cap {
+        reply
+            .reply(format!("马厩满了({cap}/{cap}),马池的马没处放;先退役或存种腾位再来,或去标准池(满厩出马按星折币)"))
+            .await?;
+        return Ok(());
+    }
+    let (cost, class_weights, horse_rarity, pity_cap) = if horse_pool {
         let c = if count == 1 { consts::GACHA_HORSE_POOL_SINGLE_COST } else { consts::GACHA_HORSE_POOL_TEN_COST };
-        (c, &consts::GACHA_HORSE_POOL_CLASS_WEIGHTS, &consts::GACHA_HORSE_POOL_RARITY_WEIGHTS)
+        (
+            c,
+            &consts::GACHA_HORSE_POOL_CLASS_WEIGHTS,
+            &consts::GACHA_HORSE_POOL_RARITY_WEIGHTS,
+            consts::GACHA_HORSE_POOL_PITY,
+        )
     } else {
         let c = if count == 1 { consts::GACHA_SINGLE_COST } else { consts::GACHA_TEN_COST };
-        (c, &consts::GACHA_CLASS_WEIGHTS, &consts::GACHA_HORSE_RARITY_WEIGHTS)
+        (c, &consts::GACHA_CLASS_WEIGHTS, &consts::GACHA_HORSE_RARITY_WEIGHTS, consts::GACHA_PITY)
     };
     if !user.pay(cost, "赛马·抽卡").await? {
         reply.reply("抽卡得花点币,你余额不够").await?;
         return Ok(());
     }
-    let db = user.db().clone();
-    let uin = user.uin();
-    let mut pity = logic::gacha_pity(&db, uin).await?;
+    let mut pity = logic::gacha_pity(&db, uin, horse_pool).await?;
     let mut stable_n = logic::stable_active_count(&db, uin).await?;
     let mut rng = fresh_rng();
     let mut lines: Vec<render::GachaLine> = Vec::new();
@@ -839,7 +878,7 @@ async fn do_gacha(reply: Reply, mut user: AUser, session: Session, count: usize,
     let mut got_horse = false;
 
     for _ in 0..count {
-        match logic::gacha_pull(&mut pity, class_weights, horse_rarity, &mut rng) {
+        match logic::gacha_pull(&mut pity, pity_cap, class_weights, horse_rarity, &mut rng) {
             logic::Pull::Item(it) => {
                 let overflow = logic::add_item(&db, uin, it, 1).await?;
                 refund += overflow as i64 * it.sell_price();
@@ -863,22 +902,21 @@ async fn do_gacha(reply: Reply, mut user: AUser, session: Session, count: usize,
             }
             logic::Pull::Horse(birth) => {
                 got_horse = true;
-                grant_horse(&db, uin, &birth, &mut stable_n, &mut lines, &mut refund).await?;
+                grant_horse(&db, uin, &birth, &mut stable_n, &mut lines, &mut refund, cap).await?;
             }
         }
     }
     // 十连保底:整轮没出马则按本池星级权重补一匹(不动 ★3+ 保底计数,纯额外兜底)。
     if count >= 10 && !got_horse {
         let birth = logic::roll_birth(horse_rarity, &mut rng);
-        grant_horse(&db, uin, &birth, &mut stable_n, &mut lines, &mut refund).await?;
+        grant_horse(&db, uin, &birth, &mut stable_n, &mut lines, &mut refund, cap).await?;
     }
-    logic::set_gacha_pity(&db, uin, pity).await?;
+    logic::set_gacha_pity(&db, uin, horse_pool, pity).await?;
     if refund > 0 {
         user.add_coin(refund, "赛马·抽卡返还").await?;
     }
     lines.push(render::GachaLine {
-        text: format!("距高星保底还差 {} 抽", (consts::GACHA_PITY - pity).max(0)),
-        rare: false,
+        text: format!("距高星保底还差 {} 抽", (pity_cap - pity).max(0)), rare: false
     });
 
     let title = if count == 1 { "抽卡" } else { "十连" };
@@ -889,21 +927,26 @@ async fn do_gacha(reply: Reply, mut user: AUser, session: Session, count: usize,
     Ok(())
 }
 
-/// `赛马喂养 <编号>` —— 买基础草料回饱食(日常维护,金币内循环)。
 #[command(
     "赛马喂养",
     description = "喂草料回饱食",
     usage = "发「赛马喂养 <编号>」,花几枚游戏币买草料回饱食度。马饿着会影响训练和比赛;\
 更好的饲料(精饲料/滋补膏)留着训练时吃。"
 )]
-async fn feed(reply: Reply, mut user: AUser, args: ArgText) -> HandlerResult {
+async fn feed(reply: Reply, mut user: AUser, session: Session, args: ArgText) -> HandlerResult {
     let Some(id) = parse_id(&args.0) else {
         reply.reply("发「赛马喂养 <编号>」").await?;
         return Ok(());
     };
     let db = user.db().clone();
+    // 同人单飞:挡并发重复扣费,也让惰性养税结算可靠(读结算日→扣费须串行)。
+    let Some(_guard) = session.single_flight_user() else {
+        reply.reply("上一条还在处理,稍等").await?;
+        return Ok(());
+    };
     let Some(mut horse) = owned_horse(&reply, &db, user.uin(), id).await? else { return Ok(()) };
     logic::settle_state(&db, &mut horse).await?;
+    logic::settle_stable_tax(&db, &mut user).await?;
     if horse.satiety >= consts::VIT_MAX {
         reply.reply("这马吃得很饱,先不用喂").await?;
         return Ok(());
@@ -929,7 +972,6 @@ async fn take_or_reply(reply: &Reply, db: &sea_orm::DatabaseConnection, uin: i64
     }
 }
 
-/// `赛马用 <编号> <道具> [维度/颜色/新名]` —— 对一匹马使用养成 / 恢复 / 繁殖 / 趣味道具(效果按具体道具)。
 #[command(
     "赛马用",
     description = "对马使用道具(养成/恢复/繁殖/趣味)",
@@ -959,6 +1001,7 @@ async fn use_item(reply: Reply, mut user: AUser, session: Session, args: ArgText
     let uin = user.uin();
     let Some(mut horse) = owned_horse(&reply, &db, uin, id).await? else { return Ok(()) };
     logic::settle_state(&db, &mut horse).await?;
+    logic::settle_stable_tax(&db, &mut user).await?;
     let mut rng = fresh_rng();
 
     match item {
@@ -1112,7 +1155,7 @@ async fn use_item(reply: Reply, mut user: AUser, session: Session, args: ArgText
             let name = name.trim();
             let chars = name.chars().count();
             if chars == 0 || chars > consts::NAME_MAX_CHARS {
-                reply.reply(format!("名字要 1 到 {} 个字", consts::NAME_MAX_CHARS)).await?;
+                reply.reply("名字空着了或太长,换一个").await?;
                 return Ok(());
             }
             if !take_or_reply(&reply, &db, uin, item).await? {
@@ -1141,25 +1184,31 @@ async fn use_item(reply: Reply, mut user: AUser, session: Session, args: ArgText
     Ok(())
 }
 
-/// `赛马治疗 <编号>` —— 花币立即治好受伤的马。
 #[command(
     "赛马治疗",
     description = "花币治好受伤的马",
     usage = "发「赛马治疗 <编号>」,花游戏币立即治愈伤病(伤越重越贵);也可以不治、等它自然养好。"
 )]
-async fn heal(reply: Reply, mut user: AUser, args: ArgText) -> HandlerResult {
+async fn heal(reply: Reply, mut user: AUser, session: Session, args: ArgText) -> HandlerResult {
     let Some(id) = parse_id(&args.0) else {
         reply.reply("发「赛马治疗 <编号>」").await?;
         return Ok(());
     };
     let db = user.db().clone();
+    // 同人单飞:挡并发重复扣费,也让惰性养税结算可靠。
+    let Some(_guard) = session.single_flight_user() else {
+        reply.reply("上一条还在处理,稍等").await?;
+        return Ok(());
+    };
     let Some(mut horse) = owned_horse(&reply, &db, user.uin(), id).await? else { return Ok(()) };
     logic::settle_state(&db, &mut horse).await?;
+    logic::settle_stable_tax(&db, &mut user).await?;
     if !logic::is_injured(&horse) {
         reply.reply("这马没受伤,不用治").await?;
         return Ok(());
     }
-    let cost = logic::heal_cost(&horse);
+    let meta = logic::player_meta_of(&db, user.uin()).await?;
+    let cost = logic::apply_discount(logic::heal_cost(&horse), logic::heal_cost_discount(&meta));
     let was = logic::injury_name(horse.injury);
     if !user.pay(cost, "赛马·治疗").await? {
         reply.reply(format!("治{was}得花点币,你余额不够")).await?;
@@ -1172,7 +1221,6 @@ async fn heal(reply: Reply, mut user: AUser, args: ArgText) -> HandlerResult {
     Ok(())
 }
 
-/// `赛马商店 [道具] [数量]` —— 用金币直购养成珍材(养成材料的主获取路线)。
 #[command(
     "赛马商店",
     description = "金币直购养成珍材",
@@ -1182,7 +1230,6 @@ async fn heal(reply: Reply, mut user: AUser, args: ArgText) -> HandlerResult {
 async fn shop(reply: Reply, mut user: AUser, session: Session, args: ArgText) -> HandlerResult {
     let mut it = args.0.split_whitespace();
     let Some(word) = it.next() else {
-        // 目录
         let mut lines = String::from("赛马商店 · 养成珍材(发「赛马商店 <道具> [数量]」购买)\n");
         for item in Item::TREASURE {
             if let Some(p) = item.shop_price() {
@@ -1220,7 +1267,7 @@ async fn shop(reply: Reply, mut user: AUser, session: Session, args: ArgText) ->
     Ok(())
 }
 
-/// `赛马出售 [道具] [数量]` —— 把背包里任意道具按回收价(基准价的 [`SELL_RATE`](consts::SELL_RATE))折成金币。
+/// 把背包道具按回收价(基准价的 [`SELL_RATE`](consts::SELL_RATE))折成金币。
 #[command(
     "赛马出售",
     description = "把道具回收成金币",
@@ -1231,7 +1278,6 @@ async fn sell(reply: Reply, mut user: AUser, session: Session, args: ArgText) ->
     let db = user.db().clone();
     let mut it = args.0.split_whitespace();
     let Some(word) = it.next() else {
-        // 目录:列背包里可回收的道具与单价 + 全部回收的合计
         let bag = logic::backpack(&db, user.uin()).await?;
         if bag.is_empty() {
             reply.reply("背包是空的,没东西可回收").await?;
@@ -1268,7 +1314,196 @@ async fn sell(reply: Reply, mut user: AUser, session: Session, args: ArgText) ->
     Ok(())
 }
 
-/// `赛马榜 [赛季/胜率]` —— 生涯胜场榜 / 本赛季榜 / 胜率榜。
+/// 账号级马场设施:看等级/造价或升一栋,惠及名下全部马。
+#[command(
+    "赛马设施",
+    description = "看/升级账号马场设施",
+    usage = "发「赛马设施」看四栋等级与下一级造价;「赛马设施 <训练场|马场|血统祠堂|仓库>」升一级\
+(训练场降训练费、马场降治疗费+减厩养税+开珍爱槽、血统祠堂降繁殖费、仓库扩在厩上限)。"
+)]
+async fn facility(reply: Reply, mut user: AUser, session: Session, args: ArgText) -> HandlerResult {
+    let db = user.db().clone();
+    let mut it = args.0.split_whitespace();
+    let Some(word) = it.next() else {
+        let meta = logic::player_meta_of(&db, user.uin()).await?;
+        let rows: Vec<render::FacilityRow> = consts::Facility::ALL
+            .iter()
+            .map(|&f| {
+                let lv = logic::account_facility_lv(&meta, f);
+                let next_cost = if lv >= f.max_lv() {
+                    None
+                } else {
+                    Some(logic::facility_cost(f.cost_base(), f.cost_ratio(), lv + 1))
+                };
+                render::FacilityRow { name: f.name(), effect: f.effect(), lv, max_lv: f.max_lv(), next_cost }
+            })
+            .collect();
+        let cap = logic::cherish_cap(&meta);
+        let used = logic::cherish_used(&db, user.uin()).await?;
+        let owner = logic::owner_label(&db, user.uin()).await?;
+        let theme = user.render_theme();
+        let img = render::facility_card(&owner, &rows, used, cap, user.coin(), &theme)?;
+        reply.msg().image_bytes(img).send().await?;
+        return Ok(());
+    };
+    let Some(f) = consts::Facility::parse(word) else {
+        reply.reply("没这栋设施,发「赛马设施」看目录(训练场/马场/血统祠堂/仓库)").await?;
+        return Ok(());
+    };
+    let Some(_guard) = session.single_flight_user() else {
+        reply.reply("上一条还在处理,稍等").await?;
+        return Ok(());
+    };
+    let meta = logic::player_meta_of(&db, user.uin()).await?;
+    let lv = logic::account_facility_lv(&meta, f);
+    if lv >= f.max_lv() {
+        reply.reply(format!("{} 已经满级(Lv{})", f.name(), f.max_lv())).await?;
+        return Ok(());
+    }
+    let cost = logic::facility_cost(f.cost_base(), f.cost_ratio(), lv + 1);
+    if !user.pay(cost, format!("赛马·设施·{}", f.name())).await? {
+        reply.reply(format!("升 {} 到 Lv{} 要 {cost} 币,你只有 {},不够", f.name(), lv + 1, user.coin())).await?;
+        return Ok(());
+    }
+    logic::set_account_facility(&db, user.uin(), f, lv + 1).await?;
+    reply.reply(format!("{} 升到 Lv{} 了——{}", f.name(), lv + 1, f.effect())).await?;
+    Ok(())
+}
+
+#[command(
+    "赛马强化",
+    description = "强化珍爱马的专属设施",
+    usage = "发「赛马强化 <编号> <训练台|战意>」;训练台抬这匹马的资质上限、战意加 PvP 战力。\
+能投资几匹由马场等级给的珍爱槽决定。"
+)]
+async fn enhance(reply: Reply, mut user: AUser, session: Session, args: ArgText) -> HandlerResult {
+    let db = user.db().clone();
+    let mut it = args.0.split_whitespace();
+    let (Some(idw), Some(fw)) = (it.next(), it.next()) else {
+        reply
+            .reply("发「赛马强化 <编号> <训练台|战意>」;训练台抬资质上限、战意加 PvP 战力,珍爱槽随马场等级解锁")
+            .await?;
+        return Ok(());
+    };
+    let Some(id) = parse_id(idw) else {
+        reply.reply("编号看不懂,发「赛马强化 <编号> <训练台|战意>」").await?;
+        return Ok(());
+    };
+    let Some(f) = consts::HorseFacility::parse(fw) else {
+        reply.reply("只有 训练台 / 战意 两种").await?;
+        return Ok(());
+    };
+    let Some(_guard) = session.single_flight_user() else {
+        reply.reply("上一条还在处理,稍等").await?;
+        return Ok(());
+    };
+    let Some(mut horse) = owned_horse(&reply, &db, user.uin(), id).await? else { return Ok(()) };
+    let lv = logic::horse_facility_lv(&horse, f);
+    if lv >= f.max_lv() {
+        reply.reply(format!("「{}」的{}已满级(Lv{})", horse.name, f.name(), f.max_lv())).await?;
+        return Ok(());
+    }
+    // 珍爱槽:这匹马尚未被投资(将占新槽)时,校验名下珍爱槽未超马场上限。
+    if !logic::is_cherished(&horse) {
+        let meta = logic::player_meta_of(&db, user.uin()).await?;
+        let cap = logic::cherish_cap(&meta);
+        let used = logic::cherish_used(&db, user.uin()).await?;
+        if used >= cap {
+            reply.reply(format!("珍爱槽用满了({used}/{cap})——升马场解锁更多槽,或只强化已投资过的马")).await?;
+            return Ok(());
+        }
+    }
+    let cost = logic::facility_cost(f.cost_base(), f.cost_ratio(), lv + 1);
+    if !user.pay(cost, format!("赛马·强化·{}", f.name())).await? {
+        reply.reply(format!("强化到 Lv{} 要 {cost} 币,你只有 {},不够", lv + 1, user.coin())).await?;
+        return Ok(());
+    }
+    logic::set_horse_facility(&db, &mut horse, f, lv + 1).await?;
+    logic::add_invested(&db, &mut horse, cost).await?; // 按马投入计入生涯投入(退役按比例返还)
+    reply.reply(format!("「{}」的{}升到 Lv{}——{}", horse.name, f.name(), lv + 1, f.effect())).await?;
+    Ok(())
+}
+
+#[command(
+    "赛马存种",
+    description = "把马存进血统库当种马",
+    usage = "发「赛马存种 <编号>」;它会退役进血统库当种马(不占在厩格、作父配种的次数比普通马多但仍有顶),需付存库费且放弃退役回馈。\
+配种用「赛马繁殖 <母编号> <种马编号>」(配种费略高)。好血统的用处是让后代起步高,不是越配越强。"
+)]
+async fn deposit_stud(reply: Reply, mut user: AUser, session: Session, args: ArgText) -> HandlerResult {
+    let Some(id) = parse_id(&args.0) else {
+        reply.reply("发「赛马存种 <编号>」").await?;
+        return Ok(());
+    };
+    let db = user.db().clone();
+    let Some(_guard) = session.single_flight_user() else {
+        reply.reply("上一条还在处理,稍等").await?;
+        return Ok(());
+    };
+    let Some(mut horse) = owned_horse(&reply, &db, user.uin(), id).await? else { return Ok(()) };
+    if horse.status == 2 {
+        reply.reply("这匹马已经退役了,不能再存种").await?;
+        return Ok(());
+    }
+    if logic::lib_count(&db, user.uin()).await? >= consts::BLOODLINE_LIB_CAP {
+        reply
+            .reply(format!("血统库满了({}/{}),先放出一匹再存", consts::BLOODLINE_LIB_CAP, consts::BLOODLINE_LIB_CAP))
+            .await?;
+        return Ok(());
+    }
+    let r = (horse.rarity.clamp(consts::RARITY_MIN, consts::RARITY_MAX) - 1) as usize;
+    let fee = consts::DEPOSIT_FEE_BY_RARITY[r];
+    let forgone = logic::retire_reward(&horse);
+    let remaining = (consts::STUD_BREED_COUNT_MAX - horse.breed_count).max(0);
+    reply
+        .reply(format!(
+            "把「{}」存进血统库当种马?付 {fee} 币、放弃它的退役回馈(约 {forgone} 币),之后它不占在厩格、能作父配种(还能配 {remaining} 次)。回复 y 确认、n 取消",
+            horse.name
+        ))
+        .await?;
+    let waiter = session.waiter().from_starter().build();
+    match waiter
+        .recv_parse(Duration::from_secs(60), super::is_cancel, |s| {
+            if super::is_yes(s) { Ok(()) } else { Err("回复 y 确认、n 取消".to_string()) }
+        })
+        .await
+    {
+        Replied::Got(()) => {}
+        Replied::Cancelled => {
+            reply.reply("行,不存了").await?;
+            return Ok(());
+        }
+        Replied::TimedOut => {
+            reply.reply("没等到确认,先不存了").await?;
+            return Ok(());
+        }
+    }
+    // 先校验余额(单飞内可靠),再原子入库,最后扣费:避免「扣了费却没入库」或「退役了却没入库」的半成品。
+    if user.coin() < fee {
+        reply.reply(format!("存库费 {fee} 币,你只有 {},不够", user.coin())).await?;
+        return Ok(());
+    }
+    logic::deposit_to_lib(&db, &mut horse).await?; // 退役 + 入库同事务
+    user.pay(fee, "赛马·存种").await?; // 余额已校验 + 单飞,必成
+    reply.reply(format!("「{}」进血统库当种马了——配种用「赛马繁殖 <母编号> {}」", horse.name, horse.id)).await?;
+    Ok(())
+}
+
+#[command(
+    "赛马血统",
+    description = "看血统库种马",
+    usage = "发「赛马血统」看你血统库里的种马;存种用「赛马存种 <编号>」。"
+)]
+async fn bloodline(reply: Reply, user: AUser) -> HandlerResult {
+    let db = user.db().clone();
+    let studs = logic::lib_studs(&db, user.uin()).await?;
+    let owner = logic::owner_label(&db, user.uin()).await?;
+    let theme = user.render_theme();
+    let img = render::bloodline_card(&owner, &studs, consts::BLOODLINE_LIB_CAP, &theme)?;
+    reply.msg().image_bytes(img).send().await?;
+    Ok(())
+}
+
 #[command(
     "赛马榜",
     description = "看赛马排行榜",
@@ -1318,7 +1553,7 @@ struct Entrant {
     items: Vec<Item>,
 }
 
-/// 校验一匹马能否参赛(本人名下、未退役、无伤、体力够);不行则回原因、返 `None`。`m` 结算后返回。
+/// 校验一匹马能否参赛(本人、未退役、无伤、体力够);不行回原因、返 `None`,过则结算后返回该马。
 async fn pvp_validate(
     reply: &Reply,
     db: &sea_orm::DatabaseConnection,
@@ -1342,10 +1577,11 @@ async fn pvp_validate(
     Ok(Some(horse))
 }
 
-/// PvP 大厅公示用的「战力名片」:★ + 五维,让报名/旁注者看清对手强弱。
+/// PvP 大厅公示的战力名片:★ + 五维资质档。
 fn horse_power_label(h: &entity::horse::Model) -> String {
-    let s = logic::stats_of(h); // 点数(列存厘点)
-    format!("★{} 速{} 耐{} 爆{} 敏{} 运{}", h.rarity, s[0], s[1], s[2], s[3], s[4])
+    let pots = [h.pot_spd, h.pot_sta, h.pot_brs, h.pot_agi, h.pot_luk];
+    let b = |i: usize| logic::aptitude_band(logic::soft_ceiling(pots[i], h.growth));
+    format!("★{} 速{} 耐{} 爆{} 敏{} 运{}", h.rarity, b(0), b(1), b(2), b(3), b(4))
 }
 
 /// 带闸取出要带的比赛道具(没有的略过),返回实际取到的。
@@ -1380,7 +1616,6 @@ fn parse_stake_items(toks: std::str::SplitWhitespace<'_>) -> (Option<i64>, Vec<I
     (stake, items)
 }
 
-/// `赛马开房 <编号> [注额] [道具]` —— 群内开一局 PvP,收报名、下注池抽水零和结算。
 #[command(
     "赛马开房",
     description = "群内开一局 PvP 对战",
@@ -1509,7 +1744,7 @@ async fn pvp_open(reply: Reply, mut user: AUser, session: Session, args: ArgText
             if entrants.len() >= 2 {
                 break End::Start;
             }
-            reply.reply("至少要 2 匹马才能开跑,再等等").await?;
+            reply.reply("还没人报名,凑齐了再开跑").await?;
         } else if text == "赛马散场" && sender == user.uin() {
             break End::Cancel;
         }
@@ -1594,7 +1829,15 @@ async fn pvp_open(reply: Reply, mut user: AUser, session: Session, args: ArgText
                 color: e.horse.color,
                 is_npc: false,
             },
-            stats: condition_stats(&e.horse),
+            stats: {
+                // 战意调理:PvP-only 战力乘子,作用于前四维(战斗维);odds 与跑判同源(都用这份 boosted 值)。
+                let mult = 1.0 + e.horse.prep_lv as f32 * consts::PREP_PVP_MULT_PER_LV;
+                let mut s = condition_stats(&e.horse);
+                for v in s.iter_mut().take(4) {
+                    *v = (*v as f32 * mult).round() as i32;
+                }
+                s
+            },
             traits: e.horse.traits,
             items: e.items.clone(),
             life_frac: logic::life_ratio(&e.horse) as f64,
@@ -1602,6 +1845,9 @@ async fn pvp_open(reply: Reply, mut user: AUser, session: Session, args: ArgText
             races: e.horse.races,
         })
         .collect();
+    // 隐含赢率所需:马段位 ELO + 即时 power(含战意乘子,与跑判同源)。在 simulate 消耗 pvp_entrants 前取。
+    let elos: Vec<i32> = entrants.iter().map(|e| e.horse.elo).collect();
+    let powers: Vec<f32> = pvp_entrants.iter().map(|pe| race::player_power(&pe.stats)).collect();
     let result = Arc::new(race::simulate_pvp(pvp_entrants, consts::PVP_TRACK_LEN, seed));
 
     // 实况:挑几个关键节点播报。
@@ -1622,7 +1868,7 @@ async fn pvp_open(reply: Reply, mut user: AUser, session: Session, args: ArgText
         if sev > 0 {
             logic::set_injury(&db, &mut e.horse, sev).await?;
         }
-        // 赛后掉落(幸运产出维):PvP 掉率减半(压"互刷变现");命中入袋,溢出折币。
+        // 赛后掉落:PvP 掉率减半(压互刷变现);命中入袋,溢出折币。
         if let Some(it) = logic::roll_drop(
             logic::stats_of(&e.horse)[Stat::Luk.idx()],
             consts::Trait::Fortuitous.in_mask(e.horse.traits),
@@ -1639,23 +1885,48 @@ async fn pvp_open(reply: Reply, mut user: AUser, session: Session, args: ArgText
     // 每日首胜:冠军原子领取(跨 PvP/PvE 只发一次)。
     let champ_first_win =
         logic::claim_first_win_today(&db, entrants[winner_idx].uin, entrants[winner_idx].horse.id).await?;
-    // 派彩:按名次系数分奖池,前三(不足则全员)分,取整零头归冠军。
-    let mut shares = vec![0i64; result.order.len()];
-    if payout > 0 {
-        let places = result.order.len().min(consts::PVP_PAYOUT_FACTOR.len());
-        let mut handed = 0i64;
-        for (rank, &factor) in consts::PVP_PAYOUT_FACTOR.iter().enumerate().take(places) {
-            let amount = (payout as f32 * factor).round() as i64;
-            shares[rank] = amount;
-            handed += amount;
+    // 赔率派彩(红线B):隐含赢率(马段位 ELO + 即时 power)→ 双修正 + 单次联合投影,零和守恒、倒扣有上限。
+    // gross_i = 各马拿回的(入场已扣 stake,故净 = gross − stake):热门碾压赢得少、爆冷重亏,冷门夺冠净赚。
+    let stakes_vec = vec![stake; entrants.len()];
+    let p = race::pvp_win_probs(&elos, &powers);
+    let gross =
+        if payout > 0 { race::pvp_payout(&p, &result.order, &stakes_vec, payout) } else { vec![0i64; entrants.len()] };
+    for (i, e) in entrants.iter().enumerate() {
+        if gross[i] > 0 {
+            let mut wu = AUser::get(&db, e.uin).await?;
+            wu.add_coin(gross[i], "赛马·赢注").await?;
         }
-        shares[0] += payout - handed; // 取整零头归冠军,保证派彩恰为 payout
-        for (rank, &order_idx) in result.order.iter().enumerate() {
-            if shares[rank] > 0 {
-                let mut wu = AUser::get(&db, entrants[order_idx].uin).await?;
-                wu.add_coin(shares[rank], "赛马·赢注").await?;
-            }
+    }
+    // 出图按名次给:shares[rank] = 第 rank 名拿回的派彩。
+    let shares: Vec<i64> = result.order.iter().map(|&idx| gross[idx]).collect();
+
+    // 段位 ELO 更新:马段位(定级期 K 大)+ 马主段位(纯荣誉,K 恒定)。
+    let mut rank_of = vec![0usize; entrants.len()];
+    for (r, &idx) in result.order.iter().enumerate() {
+        rank_of[idx] = r + 1;
+    }
+    let horse_ks: Vec<f64> = entrants
+        .iter()
+        .map(|e| {
+            if e.horse.elo_games < consts::ELO_PLACEMENT_GAMES { consts::ELO_K_PLACEMENT } else { consts::ELO_K_NORMAL }
+        })
+        .collect();
+    let h_deltas = race::elo_deltas(&rank_of, &elos, &horse_ks);
+    for (i, e) in entrants.iter_mut().enumerate() {
+        logic::bump_horse_elo(&db, &mut e.horse, h_deltas[i]).await?;
+    }
+    let owner_elos: Vec<i32> = {
+        let mut v = Vec::with_capacity(entrants.len());
+        for e in &entrants {
+            let m = logic::player_meta_of(&db, e.uin).await?;
+            v.push(m.map(|m| m.owner_elo).unwrap_or(consts::ELO_INIT));
         }
+        v
+    };
+    let owner_ks = vec![consts::ELO_K_OWNER; entrants.len()];
+    let o_deltas = race::elo_deltas(&rank_of, &owner_elos, &owner_ks);
+    for (i, e) in entrants.iter().enumerate() {
+        logic::bump_owner_elo(&db, e.uin, o_deltas[i]).await?;
     }
 
     reply.msg().image_bytes(render::pvp_result_card(&result, &shares, rake, &theme)?).send().await?;

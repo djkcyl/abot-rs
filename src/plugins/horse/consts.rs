@@ -6,32 +6,30 @@ pub const STAT_COUNT: usize = 5;
 /// 出图/公式基准值,非硬上限:训练可超过它。
 pub const STAT_MAX: i32 = 200;
 
-/// 当前值的健壮性上界(**点数**口径,非玩法上限,仅防 i32 溢出;落库按 ×[`STAT_SCALE`] 钳)。
+/// 当前值健壮性上界(点数口径,非玩法上限,仅防 i32 溢出;落库按 ×[`STAT_SCALE`] 钳)。
 pub const STAT_SANITY_MAX: i32 = 2000;
 
-/// 五维当前值的存储精度:落库值 = 显示点数 × 此值(「厘点」)。训练的亚点增量靠它累积、不被取整抹掉
-/// (久练的马单次只涨零点几也不丢);[`stats_of`](super::logic::stats_of) 读出时折回点数,reach / 比赛 /
-/// 出图一律按点数,无需感知此缩放。改它要同步迁移既有数据(活库 `UPDATE horse SET spd=spd*N,…`)。
+/// 五维当前值存储精度:落库值 = 点数 × 此值(厘点),训练亚点增量靠它累积不被取整抹掉;
+/// [`stats_of`](super::logic::stats_of) 读出折回点数,比赛/出图按点数。改它需迁移既有数据。
 pub const STAT_SCALE: i32 = 100;
 
 /// 出图归一参照:进度条/雷达按它满格、超过封顶;纯显示,不进玩法公式。
 pub const DISPLAY_REF: i32 = 360;
 /// 资质档位 C/B/A/S 的下界(D=不足 C),读 [`soft_ceiling`](super::logic::soft_ceiling)。
-/// S 档稀有、同星内维间也能分高低。
 pub const APTITUDE_BANDS: [i32; 4] = [75, 120, 180, 260];
 
 /// 一个属性维度。判别式即在 `horse` 行/数组里的下标。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stat {
-    /// 速度:每回合基础位移(凹响应,短赛道之王)。
+    /// 速度:每回合基础位移(凹响应)。
     Spd = 0,
-    /// 耐力:抗后程掉速(长赛道当家),也降伤病。
+    /// 耐力:抗后程掉速,也降伤病。
     Sta = 1,
-    /// 爆发:直接位移 + 暴击 + 落后翻盘(翻盘维)。
+    /// 爆发:直接位移 + 暴击 + 落后翻盘。
     Brs = 2,
-    /// 敏捷:闪避负面、缩短被干扰回合、起步抢位(干扰场工具维)。
+    /// 敏捷:闪避负面、缩短被干扰回合、起步抢位。
     Agi = 3,
-    /// 幸运:赛后掉落 + 名次奖加成 + 训练好值(产出/寻宝维,赛中不直接影响胜负)。
+    /// 幸运:赛后掉落 + 名次奖加成 + 训练好值(赛中不直接影响胜负)。
     Luk = 4,
 }
 
@@ -68,7 +66,6 @@ impl Stat {
 
 /// 星级取值范围。
 pub const RARITY_MIN: i16 = 1;
-/// 星级取值范围上界(★4)。
 pub const RARITY_MAX: i16 = 4;
 
 /// 领养(免费首马)固定星级。
@@ -90,10 +87,9 @@ pub const REACH_MEAN: [f32; 4] = [36.0, 54.0, 76.0, 100.0];
 pub const REACH_SIGMA: [f32; 4] = [7.0, 10.0, 14.0, 18.0];
 /// reach 钳制下界。
 pub const REACH_MIN: i32 = 20;
-/// reach 防溢出上界(纯健壮性,**非玩法上限**;玩法用软基线 [`REACH_BASELINE`])。
+/// reach 防溢出上界(纯健壮性,非玩法上限;玩法用软基线 [`REACH_BASELINE`])。
 pub const REACH_HARD_MAX: i32 = 220;
-/// 每星级的 reach **软基线**(下标 = rarity-1):繁殖把子代 reach 向它回归(软,非死墙)。
-/// 升星抬高基线才是上一台阶的正路。
+/// 每星级的 reach 软基线(下标 = rarity-1):繁殖把子代 reach 向它回归(软,非死墙)。
 pub const REACH_BASELINE: [i32; 4] = [60, 90, 120, 150];
 /// 出生 reach 钳到「本星基线 + 此余量」内(出生不超过基线太多)。
 pub const BIRTH_REACH_MARGIN: i32 = 8;
@@ -234,7 +230,7 @@ pub const FORAGE_SATIETY: i32 = 35;
 pub const TRAIN_BASE_COST: i64 = 26;
 /// 训练费用日内每次递增。
 pub const TRAIN_COST_STEP: i64 = 7;
-/// 训练费用随被练维度的**当前值**上浮(每点附加),越到后期越贵。
+/// 训练费用随被练维度的当前值上浮(每点附加),越到后期越贵。
 pub const TRAIN_COST_PER_POINT: f32 = 0.28;
 
 /// 训练单次「好值档」的基础幅度 `m` 区间(再乘 growth × `exp(-cur/reach)`)。每档 `(权重, 下界, 上界)`,
@@ -247,7 +243,7 @@ pub const TRAIN_TIERS: [(u32, f32, f32); 4] = [
 ];
 
 /// [`TRAIN_TIERS`] 的加权期望幅度(= Σ权重·档中点 / 100),出图估软平台用(见
-/// [`logic::soft_ceiling`](super::logic::soft_ceiling))。**改 TRAIN_TIERS 时同步改这里**。
+/// [`logic::soft_ceiling`](super::logic::soft_ceiling))。改 TRAIN_TIERS 时同步改这里。
 pub const TRAIN_MAG_MEAN: f32 = 6.7;
 
 /// 训练 spillover(溢出到第二维)的基础概率(幸运再抬)。
@@ -325,7 +321,7 @@ impl Difficulty {
         }
     }
 
-    /// **动态难度系数**:每匹 NPC = 玩家自己五维的**镜像 × 此值**(见 [`gen_npc`](super::race))。难度是
+    /// 动态难度系数:每匹 NPC = 玩家自己五维的镜像 × 此值(见 [`gen_npc`](super::race))。难度是
     /// 「对手相对你多强」而非绝对内容档;镜像使堆一维 min-max 钻不了空子。简单 = 对手弱于你、大师 = 强于你。
     pub fn npc_ratio(self) -> f32 {
         match self {
@@ -337,7 +333,7 @@ impl Difficulty {
         }
     }
 
-    /// 报名费**基础**部分(实际报名费 = 此值 + [`entry_step`](Difficulty::entry_step) × 今日该马已比赛次数,见
+    /// 报名费基础部分(实际报名费 = 此值 + [`entry_step`](Difficulty::entry_step) × 今日该马已比赛次数,见
     /// [`race_cmd`](super::race) 调用处)。
     pub fn entry_fee(self) -> i64 {
         match self {
@@ -381,8 +377,7 @@ pub const REWARD_POWER_REF: f32 = 150.0;
 /// 奖励实力系数的钳制区间(下界, 上界)。
 pub const REWARD_POWER_CLAMP: (f32, f32) = (0.6, 2.0);
 
-/// 敏捷满值时闪避负面道具的最大概率(线性按 `agi/STAT_EFFECT_REF` 缩放)。抬高是因敏捷定位为
-/// **干扰场工具维**,要在大师 PvE / PvP 里兑现明显边际。
+/// 敏捷满值时闪避负面道具的最大概率(线性按 `agi/STAT_EFFECT_REF` 缩放)。
 pub const AGI_DODGE_MAX: f32 = 0.85;
 /// 反射神经特性下的闪避上限(再 ×1.15 后封顶)。
 pub const AGI_DODGE_CAP_REFLEX: f32 = 0.90;
@@ -398,12 +393,12 @@ pub const AGI_REDUCE_DIV_REFLEX: i32 = 70;
 pub const STAT_EFFECT_REF: i32 = 285;
 /// 耐力后程项的缩放参照:配合后程系数区间让长赛道吃重但不「独大」。
 pub const STAMINA_STAT_REF: i32 = 255;
-/// 速度位移**凹响应**:`base = 速度^EXP × COEF`。镜像下均匀标量改不动边际胜率,唯一合法杠杆是给位移加凹曲线
+/// 速度位移凹响应:`base = 速度^EXP × COEF`。镜像下均匀标量改不动边际胜率,唯一合法杠杆是给位移加凹曲线
 /// (边际递减);线性会让高速独大。标定 速度100→4.55,不破坏全局时长,偏离 100 越远越凹。
 pub const SPEED_BASE_EXP: f32 = 0.55;
 /// 凹响应系数(见 [`SPEED_BASE_EXP`],标定 速度100→4.55)。
 pub const SPEED_BASE_COEF: f32 = 0.3611;
-/// 爆发**直接位移**项:`base ×= 1 + 爆发/STAT_EFFECT_REF × 此值`。让爆发成为可练的「暴击型二速」而非纯暴击概率
+/// 爆发直接位移项:`base ×= 1 + 爆发/STAT_EFFECT_REF × 此值`。让爆发成为可练的「暴击型二速」而非纯暴击概率
 /// (否则近废维)。
 pub const BURST_BASE_SCALE: f32 = 0.45;
 /// 后程系数斜率:进度越大、耐力越低掉速越狠。
@@ -416,14 +411,14 @@ pub const STAMINA_FACTOR_MIN: f32 = 0.40;
 pub const BURST_CRIT_SCALE: f64 = 0.30;
 /// 暴击命中时的位移倍率。
 pub const BURST_CRIT_MULT: f32 = 1.6;
-/// 落后者「追赶暴击」基础项:与领先者的距离差(归一)× (此基数 + 爆发缩放),把追赶暴击挂到**自身爆发**=翻盘维。
+/// 落后者「追赶暴击」基础项:与领先者的距离差(归一)× (此基数 + 爆发缩放),挂到自身爆发。
 pub const COMEBACK_BASE: f64 = 0.15;
 /// 追赶暴击的爆发缩放项(`爆发/STAT_EFFECT_REF × 此值`,叠进上面的基数)。
 pub const COMEBACK_BRS_SCALE: f64 = 0.25;
 /// 暴击概率封顶(纯属性 + 四叶草 + 追赶叠加后的硬上界)。设 0.7 让高 brs/luk 在 200→300 段不被截死。
 pub const CRIT_PROB_CAP: f64 = 0.7;
 /// 抖动幅度系数(`基础位移 × 此值 × 韧者/稳行乘子`):单回合随机性,逐回合独立、被中心极限平均掉。
-/// 幸运**不**收敛抖动(实测为负收益,别回退);减抖只来自韧者特性与稳行道具。
+/// 幸运不收敛抖动(实测为负收益,别回退);减抖只来自韧者特性与稳行道具。
 pub const JITTER_COEFF: f32 = 0.85;
 /// 敏捷「抢内道/起跑快」:开局阶段(进度 < [`AGI_START_PHASE`])给基础位移乘 `1 + 敏捷/STAT_MAX × 此值`。
 pub const AGI_START_BOOST: f32 = 0.3;
@@ -433,11 +428,14 @@ pub const AGI_START_PHASE: f32 = 0.2;
 pub const FREEZE_ROUNDS: i32 = 1;
 /// 冲刺:起跑数回合的速度乘子。
 pub const BOOST_MULT: f32 = 1.5;
-/// 终盘冲刺生效的赛道后段起点(progress 超过即提速)。收窄到 0.72 使其总收益与冲刺相当。
+/// 终盘冲刺生效的赛道后段起点(progress 超过即提速)。终盘冲刺整场挂载、progress 门控:仅赛道后 28%
+/// (progress > 0.72)生效、该段速度 ×[`LATE_BOOST_MULT`]。0.72 经标定使其总位移收益在典型赛长
+/// (速度100≈28回合)下≈起跑冲刺(×1.5、前 3 回合);非恒等——赛越短/马越快则终盘冲刺相对偏弱,
+/// 反之偏强(后段回合数随 track_len 增多)。实测对夺冠率提升约为起跑冲刺的 2~3 倍,故 base_value 定 90 > 冲刺 60。
 pub const LATE_BOOST_PHASE: f32 = 0.72;
 /// 终盘冲刺:后段的速度乘子。
 pub const LATE_BOOST_MULT: f32 = 1.3;
-/// 定心丸:**按 progress 线性**加到后程系数上的耐力补偿(只补后程,非全程平加)。
+/// 定心丸:按 progress 线性加到后程系数上的耐力补偿(只补后程,非全程平加)。
 pub const STAMINA_TONIC_BONUS: f32 = 0.10;
 /// 定心丸高耐减半阈值:耐力 ≥ 此值时补偿减半(防与耐力流叠成超模)。
 pub const STAMINA_TONIC_STA_GATE: i32 = 150;
@@ -464,8 +462,9 @@ pub const MARK_ROUNDS: i32 = 3;
 /// 下标同 [`Difficulty::idx`](Difficulty::idx);难度越高越爱使坏。
 pub const NPC_NEG_ITEM_PROB: [f64; 4] = [0.10, 0.22, 0.35, 0.40];
 
-/// 每人马厩容量上限(只数**在厩**的马,退役不占格,见 [`logic::stable_active_count`](super::logic))。
-pub const STABLE_CAP: usize = 30;
+/// 每人马厩基础容量上限(只数在厩的马,退役不占格;仓库设施可扩到 [`STABLE_CAP_HARD_MAX`],
+/// 见 [`effective_stable_cap`](super::logic::effective_stable_cap))。收紧到 16 是为了逼换代、别囤马。
+pub const STABLE_CAP: usize = 16;
 
 // —— 物品:比赛道具 + 训练增益饲料 ——
 
@@ -480,7 +479,7 @@ pub enum ItemKind {
     Use,
 }
 
-/// 一种物品(同存共享背包 `game_item`)。判别式即背包号段内的序号,**落库值——勿改既有项的数字**,新增往后排。
+/// 一种物品(同存共享背包 `game_item`)。判别式即背包号段内的序号,落库值勿改既有项的数字,新增往后排。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
     // —— 比赛道具 · 自身增益 ——
@@ -553,7 +552,7 @@ pub enum Item {
     NameTag = 29,
 }
 
-/// 赛马物品在**共享背包** `game_item` 里的 item_id 号段基址(其它游戏用别的号段,跨插件唯一)。
+/// 赛马物品在共享背包 `game_item` 里的 item_id 号段基址(其它游戏用别的号段,跨插件唯一)。
 pub const HORSE_ITEM_BASE: i32 = 1000;
 /// 赛马号段宽度(预留,远大于现有物品数)。
 pub const HORSE_ITEM_SPAN: i32 = 100;
@@ -732,12 +731,12 @@ impl Item {
             DrillPass => 60,
             BreakPill => 150,
             // 恢复道具
-            Care1 => 30,
-            Care2 => 60,
-            Care3 => 110,
+            Care1 => 60,
+            Care2 => 130,
+            Care3 => 220,
             EnergyDrink => 40,
-            Medicine => 60,
-            FineForage => 30,
+            Medicine => 80,
+            FineForage => 24,
             // 改名牌已下架商店(shop_price=None),给个合理的回收/掉落基准(对齐 RENAME_COST)。
             NameTag => 50,
             // 珍材已在上面经 shop_price 返回;此处兜底新增项
@@ -875,10 +874,13 @@ pub const MAX_RACE_ITEMS: usize = 2;
 pub const GACHA_SINGLE_COST: i64 = 170;
 /// 十连费用(含小折扣)。
 pub const GACHA_TEN_COST: i64 = 1580;
-/// 软保底:累计多少抽必出**高星马(★3+)**。只有 ★3+ 清空计数,自然出的 ★1/★2 马**不**清(否则保底永不触发)。
-pub const GACHA_PITY: i32 = 70;
+/// 标准池软保底:累计多少抽必出高星马(★3+)。只有 ★3+ 清空标准池计数(std_pity),
+/// 自然出的 ★1/★2 马不清(否则保底永不触发)。两池保底独立计数(见 [`GACHA_HORSE_POOL_PITY`])。
+pub const GACHA_PITY: i32 = 30;
+/// 马池软保底:马池自然出马率高(★3+≈15.6%/抽),独立计数、抽数定小些即可。
+pub const GACHA_HORSE_POOL_PITY: i32 = 25;
 /// 软保底渐升区间:末多少抽内出马权重明显抬升。
-pub const GACHA_SOFT_PITY: i32 = 20;
+pub const GACHA_SOFT_PITY: i32 = 15;
 
 /// 标准池大类权重:`(比赛道具, 训练道具, 恢复, 养成珍材, 马)`。定位是道具贩卖机,马稀、要马走马池。
 pub const GACHA_CLASS_WEIGHTS: [u32; 5] = [72, 10, 8, 6, 4];
@@ -905,28 +907,31 @@ pub const GACHA_TREASURE_WEIGHTS: [u32; 9] = [16, 14, 12, 10, 8, 12, 8, 12, 8];
 /// 标准池出马的星级权重(下标 = rarity-1)。高星收紧,稀有度更值钱。
 pub const GACHA_HORSE_RARITY_WEIGHTS: [u32; 4] = [48, 37, 12, 3];
 
-/// **马池**出马的星级权重(下标 = rarity-1):比标准池更偏高星,但高星整体收紧,顶级马更稀有。
+/// 马池出马的星级权重(下标 = rarity-1):比标准池更偏高星,但高星整体收紧,顶级马更稀有。
 pub const GACHA_HORSE_POOL_RARITY_WEIGHTS: [u32; 4] = [38, 38, 19, 5];
 
-/// **保底**强制出马时的星级权重(下标 = rarity-1):纯 ★3/★4。
+/// 保底强制出马时的星级权重(下标 = rarity-1):纯 ★3/★4。
 pub const GACHA_PITY_RARITY_WEIGHTS: [u32; 4] = [0, 0, 82, 18];
 
-/// 抽到马但马厩已满时,折算返还的金币。
-pub const GACHA_HORSE_FULL_REFUND: i64 = 80;
+/// 抽到马但马厩已满时,按星级折算返还的金币(下标 = rarity-1,高星折返更多)。
+/// (满厩抽卡已在抽前拦截/提示,见 do_gacha;此数组兜底标准池仍允许抽时的折返。)
+pub const GACHA_HORSE_FULL_REFUND_BY_RARITY: [i64; 4] = [100, 220, 480, 900];
 
 // —— 繁殖 ——
 
-/// 繁殖费用按**较高亲本星级**计(下标 = rarity-1);不随代数无限涨,免得费用墙惩罚选育纵深本身。
+/// 繁殖费用按较高亲本星级计(下标 = rarity-1);不随代数无限涨,免得费用墙惩罚选育纵深本身。
 pub const BREED_COST_BY_RARITY: [i64; 4] = [300, 500, 800, 1200];
 /// 母马繁殖冷却小时数。
 pub const BREED_COOLDOWN_HOURS: i64 = 48;
-/// 单匹马一生可作种次数上限(到顶不能再繁殖,可退役换币):防一匹神马无限刷、逼持续产新种。
+/// 普通马一生可作种次数上限(到顶不能再繁殖,可退役换币):防一匹神马无限刷、逼持续产新种。
 pub const BREED_COUNT_MAX: i32 = 5;
+/// 血统库种马的作种上限:比普通马高,但仍有顶。续种符可在此基础上 +1(每次一份珍材)。
+pub const STUD_BREED_COUNT_MAX: i32 = 12;
 /// 近亲检测上溯代数(N 代内有共同祖先即近亲)。
 pub const BREED_INCEST_DEPTH: u32 = 3;
 
 // 子代 reach 遗传(软基线回归模型,见 [`breed_child`](super::logic::breed_child)):
-//   每维先取「偏向较优亲本」的中值,再向**子代星级基线**回归 + 噪声。
+//   每维先取「偏向较优亲本」的中值,再向子代星级基线回归 + 噪声。
 /// 子代每维 reach 向本星基线回归的强度。
 pub const BREED_REACH_REVERT: f32 = 0.27;
 /// 回归后叠加的每代噪声标准差(可负 → 有概率繁殖出更烂的)。
@@ -989,7 +994,7 @@ pub const PVP_PAYOUT_FACTOR: [f32; 3] = [0.6, 0.25, 0.15];
 /// 一条马匹特性(被动)。判别式即位掩码里的 bit 位。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Trait {
-    /// 后程之王:后半程掉速更少(后程更强)。
+    /// 后程之王:后半程掉速更少。
     LateSurge = 0,
     /// 闪电起步:开局抢位加成更猛。
     QuickStart = 1,
@@ -997,17 +1002,17 @@ pub enum Trait {
     CritBeast = 2,
     /// 铁蹄:受伤概率减半。
     IronHoof = 3,
-    /// 天才:训练好值档加权 +(练得更出彩)。
+    /// 天才:训练好值档加权 +。
     Genius = 4,
     /// 韧者:发挥更稳(减抖动 + 小幅速度补偿)。
     Tenacious = 5,
-    /// 追击者:落后追赶暴击更猛(爆发/翻盘流核心)。
+    /// 追击者:落后追赶暴击更猛。
     Pursuer = 6,
-    /// 反射神经:更易闪避、且大幅缩短被持续干扰的回合(敏捷/防控流核心)。
+    /// 反射神经:更易闪避、且大幅缩短被持续干扰的回合。
     Reflex = 7,
-    /// 幸运儿:赛后掉落概率更高(幸运/寻宝流核心)。
+    /// 幸运儿:赛后掉落概率更高。
     Fortuitous = 8,
-    /// 疾风:前半程速度加成(速度/短跑流核心)。
+    /// 疾风:前半程速度加成。
     Gale = 9,
 }
 
@@ -1213,6 +1218,226 @@ impl Achievement {
         }
     }
 }
+
+// ============================================================================
+// 经济改造(慢攒养成 + 巨鳄有处花)。整体路线/数值见项目记忆 horse-economy-redesign。
+// ============================================================================
+
+// —— PvE 水龙头:报名费乘实力 ——
+/// 报名费实力系数指数:fee_eff = round((entry_fee + entry_step × 当日账号场次) × power_factor^此值)。
+/// power_factor 复用奖励侧 clamp(power/[`REWARD_POWER_REF`], [`REWARD_POWER_CLAMP`])。强马报名费涨得比奖快、净收敛。
+pub const POWER_FEE_EXP: f32 = 1.5;
+
+// —— 轻厩养税(兜底 sink:按马·按业务日)——
+/// 免费额度:生涯累计获取序 `acq_seq` ≤ 此值的马永久免税(绝对口径、单调,退役减员不恢复=一次性新手保护)。
+pub const STABLE_TAX_FREE_N: i32 = 4;
+/// 星级日税(下标 = rarity-1,币/匹/业务日,减免前)。
+pub const STABLE_TAX_BY_RARITY: [i64; 4] = [1, 3, 7, 14];
+/// 设施(马场)养税减免上限(0..1)。
+pub const STABLE_TAX_REDUCTION_CAP: f32 = 0.40;
+
+// —— 设施投资(账号级四栋 + 按马两通道;造价 = round(base × ratio^(lv-1)),见 logic::facility_cost)——
+// 训练场→降训练费 / 马场=照料中枢→降治疗费+养税减免+珍爱马投资槽 / 血统祠堂→降繁殖费 / 仓库→扩容量。
+// 红线:账号级走降本/容量、按马走 reach/PvP,不对同一增益双计。
+pub const FAC_TRAIN_MAX_LV: i16 = 8;
+pub const FAC_TRAIN_COST_BASE: f64 = 800.0;
+pub const FAC_TRAIN_COST_RATIO: f64 = 1.42;
+/// 训练场每级降训练费比例(Lv8 → -40%)。
+pub const FAC_TRAIN_DISCOUNT_PER_LV: f32 = 0.05;
+pub const FAC_STABLE_MAX_LV: i16 = 8;
+pub const FAC_STABLE_COST_BASE: f64 = 1000.0;
+pub const FAC_STABLE_COST_RATIO: f64 = 1.42;
+/// 马场每级降治疗费比例(Lv8 → -40%)。
+pub const FAC_HEAL_DISCOUNT_PER_LV: f32 = 0.05;
+/// 马场每级养税减免比例(Lv8 → -40%,再受 [`STABLE_TAX_REDUCTION_CAP`] 封顶)。
+pub const FAC_TAX_REDUCTION_PER_LV: f32 = 0.05;
+/// 珍爱马投资槽数随马场等级(下标 = 马场Lv 0..=8):限制按马投资规模。
+pub const CHERISH_SLOTS_BY_STABLE_LV: [usize; 9] = [0, 1, 1, 2, 2, 2, 3, 3, 3];
+pub const FAC_BLOOD_MAX_LV: i16 = 8;
+pub const FAC_BLOOD_COST_BASE: f64 = 900.0;
+pub const FAC_BLOOD_COST_RATIO: f64 = 1.42;
+/// 血统祠堂每级降繁殖费比例(Lv8 → -40%)。
+pub const FAC_BREED_DISCOUNT_PER_LV: f32 = 0.05;
+pub const FAC_WAREHOUSE_MAX_LV: i16 = 8;
+pub const FAC_WAREHOUSE_COST_BASE: f64 = 700.0;
+pub const FAC_WAREHOUSE_COST_RATIO: f64 = 1.40;
+/// 仓库每级扩在厩上限(在厩上限 = [`STABLE_CAP`] + 此 × 仓库Lv,封顶 [`STABLE_CAP_HARD_MAX`])。
+pub const FAC_WAREHOUSE_CAP_PER_LV: usize = 1;
+/// 扩容后的在厩硬上限(仓库满级 16 + 1×8 = 24)。
+pub const STABLE_CAP_HARD_MAX: usize = 24;
+/// 按马·专属训练台(抬该马自身 reach 上限)。
+pub const DESK_MAX_LV: i16 = 5;
+pub const DESK_COST_BASE: f64 = 600.0;
+pub const DESK_COST_RATIO: f64 = 1.62;
+/// 每级抬高该马每维 reach 上限点数(Lv5 → +15/维,叠加后仍 .min([`REACH_HARD_MAX`]))。
+pub const DESK_REACH_PER_LV: i32 = 3;
+/// 按马·专属战意调理(PvP-only 战力乘子)。
+pub const PREP_MAX_LV: i16 = 5;
+pub const PREP_COST_BASE: f64 = 400.0;
+pub const PREP_COST_RATIO: f64 = 1.60;
+/// 每级 PvP-only power 乘子增量(Lv5 → +10%,仅 PvP 跑判与赔率,不进 PvE `reward_for`)。
+pub const PREP_PVP_MULT_PER_LV: f32 = 0.02;
+
+/// 账号级设施(四栋)。造价 = round(cost_base × cost_ratio^(lv-1)),见 logic::facility_cost。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Facility {
+    /// 训练场:降训练费。
+    TrainGround,
+    /// 马场(照料中枢):降治疗费 + 养税减免 + 珍爱马投资槽。
+    Stable,
+    /// 血统祠堂:降繁殖费。
+    Bloodline,
+    /// 仓库:扩在厩容量。
+    Warehouse,
+}
+
+impl Facility {
+    pub const ALL: [Facility; 4] = [Facility::TrainGround, Facility::Stable, Facility::Bloodline, Facility::Warehouse];
+
+    pub fn parse(s: &str) -> Option<Facility> {
+        match s.trim() {
+            "训练场" | "训练" => Some(Facility::TrainGround),
+            "马场" => Some(Facility::Stable),
+            "血统祠堂" | "祠堂" | "血统" => Some(Facility::Bloodline),
+            "仓库" => Some(Facility::Warehouse),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Facility::TrainGround => "训练场",
+            Facility::Stable => "马场",
+            Facility::Bloodline => "血统祠堂",
+            Facility::Warehouse => "仓库",
+        }
+    }
+
+    pub fn effect(self) -> &'static str {
+        match self {
+            Facility::TrainGround => "降训练费",
+            Facility::Stable => "降治疗费、减厩养税,开珍爱槽",
+            Facility::Bloodline => "降繁殖费",
+            Facility::Warehouse => "扩在厩上限",
+        }
+    }
+
+    pub fn max_lv(self) -> i16 {
+        match self {
+            Facility::TrainGround => FAC_TRAIN_MAX_LV,
+            Facility::Stable => FAC_STABLE_MAX_LV,
+            Facility::Bloodline => FAC_BLOOD_MAX_LV,
+            Facility::Warehouse => FAC_WAREHOUSE_MAX_LV,
+        }
+    }
+
+    pub fn cost_base(self) -> f64 {
+        match self {
+            Facility::TrainGround => FAC_TRAIN_COST_BASE,
+            Facility::Stable => FAC_STABLE_COST_BASE,
+            Facility::Bloodline => FAC_BLOOD_COST_BASE,
+            Facility::Warehouse => FAC_WAREHOUSE_COST_BASE,
+        }
+    }
+
+    pub fn cost_ratio(self) -> f64 {
+        match self {
+            Facility::TrainGround => FAC_TRAIN_COST_RATIO,
+            Facility::Stable => FAC_STABLE_COST_RATIO,
+            Facility::Bloodline => FAC_BLOOD_COST_RATIO,
+            Facility::Warehouse => FAC_WAREHOUSE_COST_RATIO,
+        }
+    }
+}
+
+/// 按马设施(珍爱马专属两通道)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HorseFacility {
+    /// 专属训练台:抬该马自身 reach 上限。
+    Desk,
+    /// 专属战意调理:PvP-only 战力乘子。
+    Prep,
+}
+
+impl HorseFacility {
+    pub fn parse(s: &str) -> Option<HorseFacility> {
+        match s.trim() {
+            "训练台" | "专属训练台" => Some(HorseFacility::Desk),
+            "战意" | "战意调理" | "专属战意调理" => Some(HorseFacility::Prep),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            HorseFacility::Desk => "专属训练台",
+            HorseFacility::Prep => "专属战意调理",
+        }
+    }
+
+    pub fn effect(self) -> &'static str {
+        match self {
+            HorseFacility::Desk => "抬高这匹马的资质上限",
+            HorseFacility::Prep => "加这匹马的 PvP 战力,只在 PvP 生效",
+        }
+    }
+
+    pub fn max_lv(self) -> i16 {
+        match self {
+            HorseFacility::Desk => DESK_MAX_LV,
+            HorseFacility::Prep => PREP_MAX_LV,
+        }
+    }
+
+    pub fn cost_base(self) -> f64 {
+        match self {
+            HorseFacility::Desk => DESK_COST_BASE,
+            HorseFacility::Prep => PREP_COST_BASE,
+        }
+    }
+
+    pub fn cost_ratio(self) -> f64 {
+        match self {
+            HorseFacility::Desk => DESK_COST_RATIO,
+            HorseFacility::Prep => PREP_COST_RATIO,
+        }
+    }
+}
+
+// —— 血统(只提下限、不抬上限;硬墙 [`REACH_HARD_MAX`]=220 / [`GROWTH_MAX`]=155 不变)——
+// 代数不进养成公式(不抬潜力上限),只当血统标记(成就/血统库)。好血统价值在「下限稳」:子代每维
+// reach ≥ FLOOR×较优亲本、growth ≥ FLOOR×较优亲本,配出的后代不拉胯,但也超不过亲本/星级天花板。
+/// 子代每维 reach 的保底比例(× 较优亲本该维 reach)。轻保底,主要防极端坏苗。
+pub const BREED_REACH_FLOOR: f32 = 0.65;
+/// 子代 growth 的保底比例(× 较优亲本 growth)。
+pub const BREED_GROWTH_FLOOR: f32 = 0.65;
+/// 血统库基础容量(存退役种马,不占 [`STABLE_CAP`];扩容走仓库设施)。
+pub const BLOODLINE_LIB_CAP: usize = 6;
+/// 转血统资产(退役马存库)费用,按星(下标 = rarity-1);存库即放弃退役回馈。
+pub const DEPOSIT_FEE_BY_RARITY: [i64; 4] = [200, 400, 800, 1500];
+/// 从库内种马配种的繁殖费附加倍率。
+pub const STUD_BREED_SURCHARGE: f32 = 1.5;
+
+// —— PvP 段位赔率(无匹配·只开房;马主段位纯荣誉,不进赔率)——
+/// ELO 初始分(马段位 + 马主段位同初始)。
+pub const ELO_INIT: i32 = 1200;
+/// ELO 标度(逻辑斯蒂分母)。
+pub const ELO_SCALE: f64 = 400.0;
+/// 马段位定级期(前 [`ELO_PLACEMENT_GAMES`] 场)K 值。
+pub const ELO_K_PLACEMENT: f64 = 40.0;
+pub const ELO_PLACEMENT_GAMES: i32 = 10;
+/// 马段位稳定期 K 值。
+pub const ELO_K_NORMAL: f64 = 24.0;
+/// 马主段位 K 值(全程恒定;纯荣誉/排行,不进赔率)。
+pub const ELO_K_OWNER: f64 = 12.0;
+/// 即时 power 并入赔率组合分:C = 马段位ELO + 此 × (power - [`REWARD_POWER_REF`])。
+pub const POWER_TO_ELO: f64 = 2.2;
+/// 双修正派彩·赔率/名次价值扩散系数。
+pub const PVP_ODDS_S1: f64 = 1.0;
+/// 双修正派彩·期望名次差扩散系数。
+pub const PVP_ODDS_S2: f64 = 0.30;
+/// 奖圈内(前三/拿牌)倒扣押注上限比例:派彩 floor = (1 - 此值) × stake(= 0.25×stake)。圈外 floor=0(倒扣≤100%)。
+pub const PVP_REVCAP_INRING: f64 = 0.75;
 
 #[cfg(test)]
 mod tests {

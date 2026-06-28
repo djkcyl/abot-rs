@@ -4,6 +4,19 @@
 //! 五维当前值(`spd`/`sta`/`brs`/`agi`/`luk`)落库为「厘点」= 点 × [`STAT_SCALE`](super::consts::STAT_SCALE);
 //! 活库迁移须 `UPDATE horse SET spd=spd*100, sta=sta*100, brs=brs*100, agi=agi*100, luk=luk*100`
 //! 再 `ADD COLUMN train_total`(否则旧马五维被当成零点几、且缺列)。
+//!
+//! # 经济改造的活库手动迁移(fresh DB 由建表迁移自动覆盖,无需手动)
+//!
+//! - 加 horse 列:`ALTER TABLE horse ADD COLUMN acq_seq int NOT NULL DEFAULT 0,
+//!   ADD COLUMN elo int NOT NULL DEFAULT 1200, ADD COLUMN elo_games int NOT NULL DEFAULT 0,
+//!   ADD COLUMN desk_lv smallint NOT NULL DEFAULT 0, ADD COLUMN prep_lv smallint NOT NULL DEFAULT 0;`
+//! - 回填获取序(决定厩养税免税:最早 N 匹永久免):
+//!   `UPDATE horse h SET acq_seq = s.rn FROM
+//!    (SELECT id, row_number() OVER (PARTITION BY owner_uin ORDER BY id) rn FROM horse) s WHERE h.id = s.id;`
+//!   不回填则存量马 `acq_seq=0` 一律免税(与设计「第 5 匹起收」不符,可接受)。
+//! - 抽卡保底拆列:`ALTER TABLE horse_gacha RENAME COLUMN pity TO std_pity;
+//!   ALTER TABLE horse_gacha ADD COLUMN horse_pity int NOT NULL DEFAULT 0;`
+//! - 新表 `horse_player_daily` / `horse_player_meta` / `horse_bloodline_lib` 由各自 [`PluginMigration`] 自动建。
 
 use sea_orm_migration::prelude::*;
 
@@ -18,6 +31,15 @@ nagisa::inventory::submit! {
 }
 nagisa::inventory::submit! {
     PluginMigration(|| Box::new(AchievementMigration))
+}
+nagisa::inventory::submit! {
+    PluginMigration(|| Box::new(PlayerDailyMigration))
+}
+nagisa::inventory::submit! {
+    PluginMigration(|| Box::new(PlayerMetaMigration))
+}
+nagisa::inventory::submit! {
+    PluginMigration(|| Box::new(BloodlineLibMigration))
 }
 
 #[derive(DeriveIden)]
@@ -66,6 +88,11 @@ enum Horse {
     SeasonWins,
     Invested,
     TrainTotal,
+    AcqSeq,
+    Elo,
+    EloGames,
+    DeskLv,
+    PrepLv,
     FatherId,
     MotherId,
     CreatedAt,
@@ -137,6 +164,16 @@ impl MigrationTrait for Migration {
                     .col(i32col(Horse::SeasonWins))
                     .col(ColumnDef::new(Horse::Invested).big_integer().not_null().default(0))
                     .col(i32col(Horse::TrainTotal))
+                    .col(i32col(Horse::AcqSeq))
+                    .col(
+                        ColumnDef::new(Horse::Elo)
+                            .integer()
+                            .not_null()
+                            .default(crate::plugins::horse::consts::ELO_INIT),
+                    )
+                    .col(i32col(Horse::EloGames))
+                    .col(i16col(Horse::DeskLv))
+                    .col(i16col(Horse::PrepLv))
                     .col(ColumnDef::new(Horse::FatherId).big_integer().null())
                     .col(ColumnDef::new(Horse::MotherId).big_integer().null())
                     .col(
@@ -172,7 +209,8 @@ impl MigrationTrait for Migration {
 enum HorseGacha {
     Table,
     Uin,
-    Pity,
+    StdPity,
+    HorsePity,
 }
 
 pub struct GachaMigration;
@@ -191,8 +229,12 @@ impl MigrationTrait for GachaMigration {
                 Table::create()
                     .table(HorseGacha::Table)
                     .if_not_exists()
+                    // 两池独立保底:std_pity(标准池)/ horse_pity(马池)。活库迁移:
+                    //   ALTER TABLE horse_gacha RENAME COLUMN pity TO std_pity;
+                    //   ALTER TABLE horse_gacha ADD COLUMN horse_pity int NOT NULL DEFAULT 0;
                     .col(ColumnDef::new(HorseGacha::Uin).big_integer().not_null().primary_key())
-                    .col(ColumnDef::new(HorseGacha::Pity).integer().not_null().default(0))
+                    .col(ColumnDef::new(HorseGacha::StdPity).integer().not_null().default(0))
+                    .col(ColumnDef::new(HorseGacha::HorsePity).integer().not_null().default(0))
                     .to_owned(),
             )
             .await?;
@@ -246,6 +288,148 @@ impl MigrationTrait for AchievementMigration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager.drop_table(Table::drop().table(HorseAchievement::Table).if_exists().to_owned()).await?;
+        Ok(())
+    }
+}
+
+// 经济改造新增表:各自唯一迁移名,别撞 000007。
+
+#[derive(DeriveIden)]
+enum HorsePlayerDaily {
+    Table,
+    Uin,
+    Day,
+    AccountRacesToday,
+}
+
+pub struct PlayerDailyMigration;
+
+impl MigrationName for PlayerDailyMigration {
+    fn name(&self) -> &str {
+        "m20260701_000007_create_horse_player_daily"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for PlayerDailyMigration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(HorsePlayerDaily::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(HorsePlayerDaily::Uin).big_integer().not_null())
+                    .col(ColumnDef::new(HorsePlayerDaily::Day).date().not_null())
+                    .col(ColumnDef::new(HorsePlayerDaily::AccountRacesToday).integer().not_null().default(0))
+                    .primary_key(Index::create().col(HorsePlayerDaily::Uin).col(HorsePlayerDaily::Day))
+                    .to_owned(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager.drop_table(Table::drop().table(HorsePlayerDaily::Table).if_exists().to_owned()).await?;
+        Ok(())
+    }
+}
+
+#[derive(DeriveIden)]
+enum HorsePlayerMeta {
+    Table,
+    Uin,
+    TrainLv,
+    StableLv,
+    BloodLv,
+    WarehouseLv,
+    OwnerElo,
+    OwnerEloGames,
+    TaxSettledDay,
+}
+
+pub struct PlayerMetaMigration;
+
+impl MigrationName for PlayerMetaMigration {
+    fn name(&self) -> &str {
+        "m20260701_000008_create_horse_player_meta"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for PlayerMetaMigration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let i16d = |c: HorsePlayerMeta| ColumnDef::new(c).small_integer().not_null().default(0).to_owned();
+        manager
+            .create_table(
+                Table::create()
+                    .table(HorsePlayerMeta::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(HorsePlayerMeta::Uin).big_integer().not_null().primary_key())
+                    .col(i16d(HorsePlayerMeta::TrainLv))
+                    .col(i16d(HorsePlayerMeta::StableLv))
+                    .col(i16d(HorsePlayerMeta::BloodLv))
+                    .col(i16d(HorsePlayerMeta::WarehouseLv))
+                    .col(
+                        ColumnDef::new(HorsePlayerMeta::OwnerElo)
+                            .integer()
+                            .not_null()
+                            .default(crate::plugins::horse::consts::ELO_INIT),
+                    )
+                    .col(ColumnDef::new(HorsePlayerMeta::OwnerEloGames).integer().not_null().default(0))
+                    .col(ColumnDef::new(HorsePlayerMeta::TaxSettledDay).date().not_null().default("1970-01-01"))
+                    .to_owned(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager.drop_table(Table::drop().table(HorsePlayerMeta::Table).if_exists().to_owned()).await?;
+        Ok(())
+    }
+}
+
+#[derive(DeriveIden)]
+enum HorseBloodlineLib {
+    Table,
+    Uin,
+    HorseId,
+    At,
+}
+
+pub struct BloodlineLibMigration;
+
+impl MigrationName for BloodlineLibMigration {
+    fn name(&self) -> &str {
+        "m20260701_000009_create_horse_bloodline_lib"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for BloodlineLibMigration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(HorseBloodlineLib::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(HorseBloodlineLib::Uin).big_integer().not_null())
+                    .col(ColumnDef::new(HorseBloodlineLib::HorseId).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(HorseBloodlineLib::At)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .primary_key(Index::create().col(HorseBloodlineLib::Uin).col(HorseBloodlineLib::HorseId))
+                    .to_owned(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager.drop_table(Table::drop().table(HorseBloodlineLib::Table).if_exists().to_owned()).await?;
         Ok(())
     }
 }

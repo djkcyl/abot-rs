@@ -1,7 +1,6 @@
 //! 赛马插件自有实体。`horse` 存一匹马的当前态,与核心 `user` 仅软关联(`owner_uin`、父母 id 均不建 FK,
 //! 留谱系可指向已退役/易主的马),共享经济只走 `AUser`。
 
-/// `horse` 表实体。
 pub mod horse {
     use sea_orm::entity::prelude::*;
 
@@ -93,6 +92,18 @@ pub mod horse {
         /// [`train_total_decay`](super::super::logic::train_total_decay)),练得越多每次涨越少。
         pub train_total: i32,
 
+        /// 生涯累计获取序(出生时 = owner 当时马数 + 1,永不改变):厩养税免税判定 `acq_seq ≤ STABLE_TAX_FREE_N`。
+        /// 旧马迁移回填(按 owner、id 升序补 1..N)。0 视作未回填,按 id 兜底(见 logic 免税判定)。
+        pub acq_seq: i32,
+        /// 马的 PvP 段位分(ELO,初始 [`ELO_INIT`](super::super::consts::ELO_INIT));定 PvP 赔率,不影响 PvE。
+        pub elo: i32,
+        /// 马的 PvP 累计场次(定级期 K 值判定)。
+        pub elo_games: i32,
+        /// 按马设施·专属训练台等级(抬该马自身 reach 上限,封顶 [`DESK_MAX_LV`](super::super::consts::DESK_MAX_LV))。
+        pub desk_lv: i16,
+        /// 按马设施·专属战意调理等级(PvP-only 战力乘子,封顶 [`PREP_MAX_LV`](super::super::consts::PREP_MAX_LV))。
+        pub prep_lv: i16,
+
         /// 父马 id(软自关联,null = 初代)。
         pub father_id: Option<i64>,
         /// 母马 id(软自关联,null = 初代)。
@@ -100,7 +111,6 @@ pub mod horse {
         pub created_at: DateTimeWithTimeZone,
     }
 
-    /// `horse` 表无外联关系(父母为软关联,不建 FK)。
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
 
@@ -118,11 +128,84 @@ pub mod gacha {
     pub struct Model {
         #[sea_orm(primary_key, auto_increment = false)]
         pub uin: i64,
-        /// 距上次出马累计抽数(到保底强制出马后清零)。
-        pub pity: i32,
+        /// 标准池距上次出 ★3+ 马累计抽数(到保底强制出马后清零)。
+        pub std_pity: i32,
+        /// 马池独立保底计数(到保底强制出马后清零)。
+        pub horse_pity: i32,
     }
 
-    /// 无外联关系。
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// `horse_player_daily` 表实体:账号·业务日计数(报名费日内递增的账号级口径)。复合主键 (uin, day) 天滚动。
+pub mod player_daily {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "horse_player_daily")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub uin: i64,
+        /// 业务日(凌晨4点边界)。
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub day: Date,
+        /// 当日该账号已报名比赛次数(驱动报名费日内递增,跨业务日因主键含 day 自然归零)。
+        pub account_races_today: i32,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// `horse_player_meta` 表实体:账号级持久态(设施等级 + 马主段位 + 厩养税结算)。一人一行。
+pub mod player_meta {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "horse_player_meta")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub uin: i64,
+        /// 账号级设施·训练场等级(降训练费)。
+        pub train_lv: i16,
+        /// 账号级设施·马场等级(降治疗费 + 养税减免 + 珍爱马投资槽)。
+        pub stable_lv: i16,
+        /// 账号级设施·血统祠堂等级(降繁殖费)。
+        pub blood_lv: i16,
+        /// 账号级设施·仓库等级(扩在厩上限)。
+        pub warehouse_lv: i16,
+        /// 马主段位分(ELO,纯荣誉/排行,不进赔率)。
+        pub owner_elo: i32,
+        pub owner_elo_games: i32,
+        /// 上次厩养税结算的业务日。
+        pub tax_settled_day: Date,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// `horse_bloodline_lib` 表实体:血统库成员(退役种马存库,不占 [`STABLE_CAP`](super::consts::STABLE_CAP))。复合主键 (uin, horse_id)。
+pub mod bloodline_lib {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "horse_bloodline_lib")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub uin: i64,
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub horse_id: i64,
+        pub at: DateTimeWithTimeZone,
+    }
+
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
 
@@ -144,7 +227,6 @@ pub mod achievement {
         pub earned_at: DateTimeWithTimeZone,
     }
 
-    /// 无外联关系。
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
 

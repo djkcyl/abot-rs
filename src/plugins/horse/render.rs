@@ -28,7 +28,7 @@ const L2_SUB_DY: f32 = 16.0;
 /// 两行列表行的行高(行间留白 > 行内名↔说明留白)。
 const L2_ROW_H: f32 = 60.0;
 
-/// 六种毛色对应的标记色(纯外观,固定不随主题)。下标 = `color` 列。
+/// 毛色标记色(固定不随主题);下标 = `color` 列。
 const COAT: [(u8, u8, u8); 6] = [
     (0xb0, 0x3a, 0x2e), // 枣红
     (0x9c, 0x6b, 0x33), // 栗色
@@ -182,18 +182,6 @@ fn growth_tag(growth: i32) -> &'static str {
     }
 }
 
-/// 该维能练到多高 → 粗档资质(D–S),读与雷达虚线同源的 [`soft_ceiling`](super::logic::soft_ceiling);阈值见 [`APTITUDE_BANDS`](super::consts::APTITUDE_BANDS)。
-fn aptitude_band(soft_ceiling: i32) -> &'static str {
-    let b = consts::APTITUDE_BANDS;
-    match soft_ceiling {
-        v if v >= b[3] => "S",
-        v if v >= b[2] => "A",
-        v if v >= b[1] => "B",
-        v if v >= b[0] => "C",
-        _ => "D",
-    }
-}
-
 /// 名次牌色(金 / 银 / 铜 / 中性)。
 fn medal_color(sk: &Skin, rank: usize) -> Color {
     match rank {
@@ -279,7 +267,7 @@ fn stat_row(
     frac: f32,
     ceiling: f32,
 ) -> nagisa::render::Result<()> {
-    let (label_w, value_w) = (58.0, 78.0);
+    let (label_w, value_w) = (58.0, 34.0);
     let bar_x = x + label_w + 6.0;
     let bar_w = (w - label_w - value_w - 16.0).max(8.0);
     c.text_mid(x, cy, label_w, o, |t| {
@@ -436,10 +424,10 @@ fn horse_canvas(m: &horse::Model, owner: &str, theme: &UserTheme) -> nagisa::ren
     let mut cy = bar0;
     for s in Stat::ALL {
         let v = cur[s.idx()];
-        let val = format!("{v}  {}", aptitude_band(super::logic::soft_ceiling(pots[s.idx()], m.growth)));
+        let val = super::logic::aptitude_band(super::logic::soft_ceiling(pots[s.idx()], m.growth));
         let frac = (v as f32 / RADAR_REF).max(0.04);
         let ceil = super::logic::soft_ceiling(pots[s.idx()], m.growth) as f32 / RADAR_REF;
-        stat_row(&mut c, &o, &sk, bx0, cy, bw, s.name(), &val, stat_paint(&sk, s), frac, ceil)?;
+        stat_row(&mut c, &o, &sk, bx0, cy, bw, s.name(), val, stat_paint(&sk, s), frac, ceil)?;
         cy += bar_step;
     }
 
@@ -533,14 +521,21 @@ fn horse_canvas(m: &horse::Model, owner: &str, theme: &UserTheme) -> nagisa::ren
 // 马厩卡
 
 /// 马厩总览卡:逐匹马一行(毛色点 + 名 + 星 + 状态 + 体力),全部居中于行中线。
-pub fn stable_card(owner: &str, title: Option<&str>, horses: &[horse::Model], theme: &UserTheme) -> Result<Vec<u8>> {
-    stable_canvas(owner, title, horses, theme).and_then(|c| c.encode(OutputFormat::Webp)).context("赛马出图")
+pub fn stable_card(
+    owner: &str,
+    title: Option<&str>,
+    horses: &[horse::Model],
+    cap: usize,
+    theme: &UserTheme,
+) -> Result<Vec<u8>> {
+    stable_canvas(owner, title, horses, cap, theme).and_then(|c| c.encode(OutputFormat::Webp)).context("赛马出图")
 }
 
 fn stable_canvas(
     owner: &str,
     title: Option<&str>,
     horses: &[horse::Model],
+    cap: usize,
     theme: &UserTheme,
 ) -> nagisa::render::Result<Canvas> {
     let sk = Skin::of(theme);
@@ -548,9 +543,9 @@ fn stable_canvas(
     let active = horses.iter().filter(|h| h.status != 2).count();
     let retired = horses.len() - active;
     let cnt = if retired > 0 {
-        format!("在厩 {active}/{} · 退役 {retired}", consts::STABLE_CAP)
+        format!("在厩 {active}/{cap} · 退役 {retired}")
     } else {
-        format!("在厩 {active}/{}", consts::STABLE_CAP)
+        format!("在厩 {active}/{cap}")
     };
     let sub = match title {
         Some(t) => format!("称号「{t}」 · {cnt}"),
@@ -835,7 +830,7 @@ fn place_row(
     Ok(())
 }
 
-/// PvE 结算卡:名次榜(玩家高亮 + 「你的马」)+ 名次/奖励 + 每日首胜 + 伤病 + 赛况摘要,**结算内容全在这一张**。
+/// PvE 结算卡:名次榜(玩家高亮 + 「你的马」)+ 名次/奖励 + 每日首胜 + 伤病 + 赛况摘要,结算内容全在这一张。
 /// `bonus` 为每日首胜奖(0 = 无),`injury` 为本场受伤等级(0 = 无)。
 pub fn result_card(
     result: &RaceResult,
@@ -939,7 +934,7 @@ fn result_canvas(
     Ok(c)
 }
 
-/// PvP 结算卡:全名次(冠军金牌高亮 + 「冠军」)+ 各名次分得的奖池。**群内观赛卡,不带「你的马」视角**。
+/// PvP 结算卡:全名次(冠军金牌高亮 + 「冠军」)+ 各名次分得的奖池。群内观赛卡,不带「你的马」视角。
 pub fn pvp_result_card(result: &RaceResult, shares: &[i64], rake: i64, theme: &UserTheme) -> Result<Vec<u8>> {
     pvp_result_canvas(result, shares, rake, theme).and_then(|c| c.encode(OutputFormat::Webp)).context("赛马出图")
 }
@@ -1233,6 +1228,153 @@ fn achievement_canvas(
     Ok(c)
 }
 
+// 设施卡
+
+/// 设施卡的一行(账号级一栋设施)。
+pub struct FacilityRow {
+    pub name: &'static str,
+    pub effect: &'static str,
+    pub lv: i16,
+    pub max_lv: i16,
+    /// 升下一级造价;`None` = 已满级。
+    pub next_cost: Option<i64>,
+}
+
+/// 账号马场设施卡:四栋等级 / 作用 / 下一级造价 + 珍爱槽 + 余额。
+pub fn facility_card(
+    owner: &str,
+    rows: &[FacilityRow],
+    cherish_used: usize,
+    cherish_cap: usize,
+    coin: i64,
+    theme: &UserTheme,
+) -> Result<Vec<u8>> {
+    facility_canvas(owner, rows, cherish_used, cherish_cap, coin, theme)
+        .and_then(|c| c.encode(OutputFormat::Webp))
+        .context("赛马出图")
+}
+
+fn facility_canvas(
+    owner: &str,
+    rows: &[FacilityRow],
+    cherish_used: usize,
+    cherish_cap: usize,
+    coin: i64,
+    theme: &UserTheme,
+) -> nagisa::render::Result<Canvas> {
+    let sk = Skin::of(theme);
+    let o = card_opts(theme);
+    let row_h = L2_ROW_H;
+    let h = 110.0 + rows.len() as f32 * row_h + 78.0;
+    let mut c = Canvas::new(W, h, o.scale)?;
+    paint_bg(&mut c, &sk, W, h);
+    let div = title_block(&mut c, &o, &sk, &format!("{owner} 的马场"), Some("账号设施 · 升级惠及名下全部马"))?;
+    let first = div + 4.0 + row_h / 2.0;
+    let dots = [sk.primary, sk.warm, sk.vivid, sk.deep];
+    for (i, r) in rows.iter().enumerate() {
+        let cy = first + i as f32 * row_h;
+        if i % 2 == 1 {
+            zebra(&mut c, &sk, cy, row_h - 2.0);
+        }
+        c.disc(PAD + 10.0, cy, 5.0, dots[i % dots.len()]);
+        c.text_mid(PAD + 24.0, cy + L2_NAME_DY, 320.0, &o, |t| {
+            t.styled(r.name, |s| {
+                s.size(0.84).weight(700).color(&hexs(sk.text));
+            });
+        })?;
+        c.text_mid(PAD + 24.0, cy + L2_SUB_DY, 360.0, &o, |t| {
+            t.styled(r.effect, |s| {
+                s.size(0.56).color(&hexs(sk.muted));
+            });
+        })?;
+        c.text_mid(W - PAD - 160.0, cy + L2_NAME_DY, 160.0, &o, |t| {
+            t.align(Align::Right).styled(format!("Lv {}/{}", r.lv, r.max_lv), |s| {
+                s.size(0.8).weight(800).color(&hexs(sk.warm));
+            });
+        })?;
+        let foot = match r.next_cost {
+            Some(cost) => format!("升级 {cost} 币"),
+            None => "已满级".to_string(),
+        };
+        c.text_mid(W - PAD - 160.0, cy + L2_SUB_DY, 160.0, &o, |t| {
+            t.align(Align::Right).styled(foot, |s| {
+                s.size(0.6).color(&hexs(if r.next_cost.is_some() { sk.muted } else { sk.soft }));
+            });
+        })?;
+    }
+    let fy = div + rows.len() as f32 * row_h + 22.0;
+    c.line(PAD, fy, W - PAD, fy, 1.0, sk.hairline);
+    c.text_mid(PAD, fy + 26.0, W - 2.0 * PAD, &o, |t| {
+        t.align(Align::Center).styled(
+            format!("珍爱马投资槽 {cherish_used}/{cherish_cap}　·　余额 {coin} 币"),
+            |s| {
+                s.size(0.66).color(&hexs(sk.muted));
+            },
+        );
+    })?;
+    Ok(c)
+}
+
+// 血统库卡
+
+/// 血统库卡:库内种马一览(星级 / 代数 / 编号)。
+pub fn bloodline_card(owner: &str, studs: &[horse::Model], cap: usize, theme: &UserTheme) -> Result<Vec<u8>> {
+    bloodline_canvas(owner, studs, cap, theme).and_then(|c| c.encode(OutputFormat::Webp)).context("赛马出图")
+}
+
+fn bloodline_canvas(
+    owner: &str,
+    studs: &[horse::Model],
+    cap: usize,
+    theme: &UserTheme,
+) -> nagisa::render::Result<Canvas> {
+    let sk = Skin::of(theme);
+    let o = card_opts(theme);
+    let row_h = L2_ROW_H;
+    let h = (110.0 + studs.len().max(1) as f32 * row_h + 16.0).max(180.0);
+    let mut c = Canvas::new(W, h, o.scale)?;
+    paint_bg(&mut c, &sk, W, h);
+    let div = title_block(
+        &mut c,
+        &o,
+        &sk,
+        &format!("{owner} 的血统库"),
+        Some(&format!("种马 {}/{} · 配种「赛马繁殖 <母> <种马>」", studs.len(), cap)),
+    )?;
+    if studs.is_empty() {
+        c.text_mid(PAD, div + 40.0, W - 2.0 * PAD, &o, |t| {
+            t.align(Align::Center).styled("库里还没有种马,「赛马存种 <编号>」把好马存进来", |s| {
+                s.size(0.8).color(&hexs(sk.muted));
+            });
+        })?;
+        return Ok(c);
+    }
+    let first = div + 4.0 + row_h / 2.0;
+    for (i, m) in studs.iter().enumerate() {
+        let cy = first + i as f32 * row_h;
+        if i % 2 == 1 {
+            zebra(&mut c, &sk, cy, row_h - 2.0);
+        }
+        c.disc(PAD + 10.0, cy, 5.0, coat(m.color));
+        c.text_mid(PAD + 24.0, cy + L2_NAME_DY, 360.0, &o, |t| {
+            t.styled(&m.name, |s| {
+                s.size(0.84).weight(700).color(&hexs(sk.text));
+            });
+        })?;
+        c.text_mid(PAD + 24.0, cy + L2_SUB_DY, 360.0, &o, |t| {
+            t.styled(format!("第 {} 代 · #{}", m.generation, m.id), |s| {
+                s.size(0.6).color(&hexs(sk.muted));
+            });
+        })?;
+        c.text_mid(W - PAD - 130.0, cy, 130.0, &o, |t| {
+            t.align(Align::Right).styled(stars(m.rarity), |s| {
+                s.size(0.82).weight(700).color(&hexs(sk.warm));
+            });
+        })?;
+    }
+    Ok(c)
+}
+
 // ——————————————————————————— 玩法说明(渲染 README) ———————————————————————————
 
 /// 赛马 README(随二进制内嵌),`赛马玩法` 渲成图发出,与文档同源。
@@ -1304,6 +1446,11 @@ mod preview {
             season_wins: 0,
             invested: 20000,
             train_total: 120,
+            acq_seq: 10,
+            elo: consts::ELO_INIT,
+            elo_games: 0,
+            desk_lv: 0,
+            prep_lv: 0,
             father_id: Some(3),
             mother_id: Some(5),
             created_at: t,
@@ -1361,8 +1508,8 @@ mod preview {
             let horses: Vec<_> = (1..=6)
                 .map(|i| sample(i, &format!("赛马{i}号"), 80 + i as i32 * 8, (i % 6) as i16, 0, (i % 3) as i16))
                 .collect();
-            assert!(!stable_card("A60", Some("名门"), &horses, &theme).unwrap().is_empty());
-            assert!(!stable_card("A60", None, &[], &theme).unwrap().is_empty());
+            assert!(!stable_card("A60", Some("名门"), &horses, consts::STABLE_CAP, &theme).unwrap().is_empty());
+            assert!(!stable_card("A60", None, &[], consts::STABLE_CAP, &theme).unwrap().is_empty());
             let items = vec![(Item::Boost, 12), (Item::Feed1, 7)];
             assert!(!backpack_card("A60", &items, &theme).unwrap().is_empty());
             assert!(!backpack_card("A60", &[], &theme).unwrap().is_empty());
@@ -1381,6 +1528,15 @@ mod preview {
             assert!(!rank_card("赛马 · 胜率榜", &[], &theme).unwrap().is_empty());
             let earned: HashSet<i32> = [1, 3, 5].into_iter().collect();
             assert!(!achievement_card("A60", Some("天选"), &earned, &theme).unwrap().is_empty());
+            let frows = vec![
+                FacilityRow {
+                    name: "训练场", effect: "每级降训练费 5%", lv: 3, max_lv: 8, next_cost: Some(1613)
+                },
+                FacilityRow { name: "仓库", effect: "每级 +1 在厩上限", lv: 8, max_lv: 8, next_cost: None },
+            ];
+            assert!(!facility_card("A60", &frows, 2, 3, 12345, &theme).unwrap().is_empty());
+            assert!(!bloodline_card("A60", &horses, 6, &theme).unwrap().is_empty());
+            assert!(!bloodline_card("A60", &[], 6, &theme).unwrap().is_empty());
             // 玩法说明图(渲染 README):两主题下都能渲出非空图、不 panic。
             assert!(!guide_image(&theme).unwrap().is_empty());
         }
@@ -1442,7 +1598,7 @@ mod preview {
                 hh
             })
             .collect();
-        put("09_stable", stable_canvas("A60", Some("名门"), &horses, &dk).unwrap());
+        put("09_stable", stable_canvas("A60", Some("名门"), &horses, consts::STABLE_CAP, &dk).unwrap());
 
         let items = vec![
             (Item::Boost, 12),
@@ -1479,6 +1635,23 @@ mod preview {
 
         let earned: HashSet<i32> = [1, 3, 5, 6].into_iter().collect();
         put("13_achievement", achievement_canvas("A60", Some("天选"), &earned, &lt).unwrap());
+
+        let frows: Vec<_> = consts::Facility::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, &f)| {
+                let lv = (i as i16 * 3).min(f.max_lv());
+                let next_cost = if lv >= f.max_lv() {
+                    None
+                } else {
+                    Some(crate::plugins::horse::logic::facility_cost(f.cost_base(), f.cost_ratio(), lv + 1))
+                };
+                FacilityRow { name: f.name(), effect: f.effect(), lv, max_lv: f.max_lv(), next_cost }
+            })
+            .collect();
+        put("15_facility", facility_canvas("A60", &frows, 2, 3, 24680, &dk).unwrap());
+        put("16_bloodline", bloodline_canvas("A60", &horses[..4], 6, &lt).unwrap());
+
         std::fs::write(format!("{dir}/14_guide.webp"), guide_image(&lt).unwrap()).unwrap();
         eprintln!("画廊已渲染到 {dir}/");
     }

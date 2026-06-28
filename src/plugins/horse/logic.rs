@@ -13,11 +13,11 @@ use sea_orm::prelude::DateTimeWithTimeZone;
 use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set, Statement,
+    QueryOrder, QuerySelect, Set, Statement, TransactionTrait,
 };
 
 use super::consts::{self, Achievement, Item, Stat, Trait};
-use super::entity::{achievement, gacha, horse};
+use super::entity::{achievement, bloodline_lib, gacha, horse, player_daily, player_meta};
 
 /// 近似高斯抽样(三均匀和,免引 rand_distr):均值 `mean`、标准差约 `sigma`。
 fn gauss(mean: f32, sigma: f32, rng: &mut StdRng) -> f32 {
@@ -54,7 +54,7 @@ fn roll_reach_one(rarity: i16, sigma: f32, rng: &mut StdRng) -> i32 {
     gauss(consts::REACH_MEAN[r], sigma, rng).round().clamp(consts::REACH_MIN as f32, hi) as i32
 }
 
-/// 抽五维出生 reach,各维独立:小概率出「惊喜苗」(该维落在本星基线附近,罕见好苗),否则按星级带宽。
+/// 抽五维出生 reach,各维独立:小概率落到本星基线附近(惊喜苗),否则按星级带宽。
 pub fn roll_reach(rarity: i16, rng: &mut StdRng) -> [i32; consts::STAT_COUNT] {
     let r = (rarity.clamp(consts::RARITY_MIN, consts::RARITY_MAX) - 1) as usize;
     std::array::from_fn(|_| {
@@ -116,7 +116,7 @@ pub fn roll_birth(rarity_weights: &[u32; 4], rng: &mut StdRng) -> Birth {
     birth_for_rarity(roll_rarity(rarity_weights, rng), rng)
 }
 
-/// 领养首马的出生属性:**固定 ★2**,reach 用窄带宽 [`STARTER_REACH_SIGMA`](consts::STARTER_REACH_SIGMA)。
+/// 领养首马的出生属性:固定 ★2,reach 用窄带宽 [`STARTER_REACH_SIGMA`](consts::STARTER_REACH_SIGMA)。
 pub fn roll_starter(rng: &mut StdRng) -> Birth {
     let rarity = consts::STARTER_RARITY;
     let reach: [i32; consts::STAT_COUNT] =
@@ -145,6 +145,10 @@ pub async fn create_horse(db: &DatabaseConnection, spec: NewHorse<'_>) -> Result
     let today = crate::data::util::business_day();
     // 寿命上限由幸运出生潜力(pot_luk)定;三寿命列出生即满。
     let lm = lifespan_max_for(birth.reach[Stat::Luk.idx()]);
+    // 生涯累计获取序 = owner 当前马数(含退役)+ 1:厩养税免税额度按它判定(绝对口径、单调只进不退)。
+    // 读-后-插有窗口,但造马入口(gacha/breed)都在 single_flight_user 内串行、十连逐胎即时落库(下一胎读到上一胎),
+    // adopt 仅首马(acq=1);故同人不并发造马、不产生重复序,边界并列只影响免/税一念、无害。
+    let acq = stable(db, owner_uin).await?.len() as i32 + 1;
     let am = horse::ActiveModel {
         id: NotSet,
         owner_uin: Set(owner_uin),
@@ -190,6 +194,11 @@ pub async fn create_horse(db: &DatabaseConnection, spec: NewHorse<'_>) -> Result
         season_wins: Set(0),
         invested: Set(invested),
         train_total: Set(0),
+        acq_seq: Set(acq),
+        elo: Set(consts::ELO_INIT),
+        elo_games: Set(0),
+        desk_lv: Set(0),
+        prep_lv: Set(0),
         father_id: Set(parents.0),
         mother_id: Set(parents.1),
         created_at: NotSet,
@@ -216,12 +225,20 @@ pub async fn stable_count(db: &DatabaseConnection, uin: i64) -> Result<usize> {
     Ok(stable(db, uin).await?.len())
 }
 
-/// **在厩**马匹数(不含退役;容量上限 [`STABLE_CAP`](consts::STABLE_CAP) 按它判,退役不占格)。
+/// 在厩马匹数(不含退役;容量上限 [`effective_stable_cap`] 按它判,退役不占格)。
 pub async fn stable_active_count(db: &DatabaseConnection, uin: i64) -> Result<usize> {
     Ok(stable(db, uin).await?.iter().filter(|h| h.status != 2).count())
 }
 
-/// 五维当前值取数组(**点数**:列存厘点 = 点 × [`STAT_SCALE`](consts::STAT_SCALE),这里四舍五入折回点数;
+/// 在厩容量上限 = [`STABLE_CAP`](consts::STABLE_CAP) + 仓库设施每级 [`FAC_WAREHOUSE_CAP_PER_LV`](consts::FAC_WAREHOUSE_CAP_PER_LV) × 仓库Lv,
+/// 封顶 [`STABLE_CAP_HARD_MAX`](consts::STABLE_CAP_HARD_MAX)(仓库满级 16+1×8=24)。
+pub async fn effective_stable_cap(db: &DatabaseConnection, uin: i64) -> Result<usize> {
+    let lv =
+        player_meta::Entity::find_by_id(uin).one(db).await.context("查仓库等级")?.map(|m| m.warehouse_lv).unwrap_or(0);
+    Ok((consts::STABLE_CAP + consts::FAC_WAREHOUSE_CAP_PER_LV * lv.max(0) as usize).min(consts::STABLE_CAP_HARD_MAX))
+}
+
+/// 五维当前值取数组(点数:列存厘点 = 点 × [`STAT_SCALE`](consts::STAT_SCALE),这里四舍五入折回点数;
 /// reach / 比赛 / 出图都用点数口径)。
 pub fn stats_of(m: &horse::Model) -> [i32; consts::STAT_COUNT] {
     let pts = |c: i32| (c + consts::STAT_SCALE / 2) / consts::STAT_SCALE;
@@ -252,15 +269,15 @@ pub fn stamina_life_mult(ratio: f32) -> f32 {
         * ((consts::LIFESPAN_LATE_RACE_RATIO - ratio) / consts::LIFESPAN_LATE_RACE_RATIO).clamp(0.0, 1.0)
 }
 
-/// 全局调教衰减:总调教次数 `n` 越多,每次训练(任意维)增量越小——与单维天赋线衰减 `exp(-cur/reach)`
-/// **叠乘**,让久经调教的马边际收益递减(配合寿命推动换代)。头 [`TRAIN_GLOBAL_FREE`](consts::TRAIN_GLOBAL_FREE)
-/// 次满额,其后按 `1/(1+(n-FREE)/K)` 平滑衰减(渐近 0、不致死)。
+/// 全局调教衰减:总调教次数 `n` 越多每次训练增量越小,与单维天赋线衰减 `exp(-cur/reach)` 叠乘,边际收益递减
+/// (配合寿命推动换代)。头 [`TRAIN_GLOBAL_FREE`](consts::TRAIN_GLOBAL_FREE) 次满额,其后 `1/(1+(n-FREE)/K)` 平滑衰减
+/// (渐近 0、不致死)。
 pub fn train_total_decay(n: i32) -> f32 {
     let over = (n - consts::TRAIN_GLOBAL_FREE).max(0) as f32;
     1.0 / (1.0 + over / consts::TRAIN_GLOBAL_K)
 }
 
-/// **纯计算、不写库**:把资源恢复 + 伤病到期应用到内存副本,供只读展示出当前态。
+/// 纯计算、不写库:把资源恢复 + 伤病到期应用到内存副本,供只读展示出当前态。
 /// 按 [块](consts::STATE_BLOCK_MIN)整块结算资源,余数留到下次;伤病到期自动转伤痕、伤痕到期自动清。
 pub fn project(m: &horse::Model) -> horse::Model {
     let now = chrono::Local::now().fixed_offset();
@@ -284,7 +301,7 @@ pub fn project(m: &horse::Model) -> horse::Model {
         out.satiety = (out.satiety - consts::SATIETY_PER_BLOCK * b).clamp(0, consts::VIT_MAX);
         out.state_at += chrono::Duration::minutes(blocks * consts::STATE_BLOCK_MIN);
     }
-    // 跨业务日则体力回满。用**原始** state_at 判跨界,触发时把 state_at 推到 now 消费掉余量,
+    // 跨业务日则体力回满。用原始 state_at 判跨界,触发时把 state_at 推到 now 消费掉余量,
     // 避免后续读改写反复重置(否则当日训练扣的体力会被退回)。
     if crate::data::util::business_day_of(m.state_at) < crate::data::util::business_day_of(now) {
         out.vitality = consts::VIT_MAX;
@@ -293,7 +310,7 @@ pub fn project(m: &horse::Model) -> horse::Model {
     out
 }
 
-/// 结算并**落库**:[`project`] 算当前态,有差才写。改资源的命令调用前须先结算;结算后 `m` 与库一致。
+/// 结算并落库:[`project`] 算当前态,有差才写。改资源的命令调用前须先结算;结算后 `m` 与库一致。
 pub async fn settle_state(db: &DatabaseConnection, m: &mut horse::Model) -> Result<()> {
     let p = project(m);
     if p.vitality == m.vitality
@@ -351,7 +368,7 @@ pub fn injury_name(severity: i16) -> &'static str {
     }
 }
 
-/// 今日训练某维度的费用:基础 + 日内递增 + 随该维度**当前值**上浮。`today` 为业务日。
+/// 今日训练某维度的费用:基础 + 日内递增 + 随该维度当前值上浮。`today` 为业务日。
 pub fn train_cost(m: &horse::Model, focus: Stat, today: NaiveDate) -> i64 {
     let count = if m.train_day == today { m.train_today as i64 } else { 0 };
     let cur = stats_of(m)[focus.idx()];
@@ -360,7 +377,7 @@ pub fn train_cost(m: &horse::Model, focus: Stat, today: NaiveDate) -> i64 {
         + (cur as f32 * consts::TRAIN_COST_PER_POINT).round() as i64
 }
 
-/// 一次训练的随机产出(审计/呈现用)。增量是**点数**,可含小数(久练时单次只涨零点几)。
+/// 一次训练的随机产出(审计/呈现用)。增量是点数,可含小数(久练时单次只涨零点几)。
 pub struct TrainRoll {
     /// 聚焦维度的实际增量(点)。
     pub focus: (Stat, f32),
@@ -368,7 +385,7 @@ pub struct TrainRoll {
     pub spill: Option<(Stat, f32)>,
 }
 
-/// 按「好值档」抽该维**单维**增量(点,未取整)`档值 × growth × exp(-当前值/reach)`,floor-0:越近 reach 衰减越狠。
+/// 按「好值档」抽该维单维增量(点,未取整)`档值 × growth × exp(-当前值/reach)`,floor-0:越近 reach 衰减越狠。
 /// 不含全局调教衰减 / 寿命效率(那两项由 [`apply_train`] 在外层统一叠乘)。`cur`/`reach` 走点数口径。
 /// 档权重受幸运 + 饲料 + `well_fed` 抬向优档,`hungry` 压向低档。
 #[allow(clippy::too_many_arguments)]
@@ -410,6 +427,18 @@ pub fn soft_ceiling(reach: i32, growth: i32) -> i32 {
     (reach as f32 * (consts::TRAIN_MAG_MEAN * growth as f32 / 100.0).ln()).round() as i32
 }
 
+/// 某维能练到多高 → 粗档资质（D–S），入参为 [`soft_ceiling`] 估值，阈值见 [`APTITUDE_BANDS`](consts::APTITUDE_BANDS)。
+pub fn aptitude_band(soft_ceiling: i32) -> &'static str {
+    let b = consts::APTITUDE_BANDS;
+    match soft_ceiling {
+        v if v >= b[3] => "S",
+        v if v >= b[2] => "A",
+        v if v >= b[1] => "B",
+        v if v >= b[0] => "C",
+        _ => "D",
+    }
+}
+
 /// 一次训练用的消耗品(传 `None` 即裸练)。决定好值加成 + 专注/集训/破限三种特效。
 #[derive(Clone, Copy)]
 pub struct TrainAid {
@@ -439,7 +468,7 @@ impl TrainAid {
 const FOCUS_FEED_MULT: f32 = 1.5;
 
 /// 应用一次训练:聚焦维随机增量 + 概率溢出第二维 + 扣体力 + 日内计数,原子写库并同步 `m`。
-/// `aid` 训练消耗品特效,`hungry`/`well_fed` 按饱食调好值档。**调用方须先 [`settle_state`] 且确认体力足、金币/道具已扣**。
+/// `aid` 训练消耗品特效,`hungry`/`well_fed` 按饱食调好值档。调用方须先 [`settle_state`] 且确认体力足、金币/道具已扣。
 pub async fn apply_train(
     db: &DatabaseConnection,
     m: &mut horse::Model,
@@ -451,7 +480,10 @@ pub async fn apply_train(
 ) -> Result<TrainRoll> {
     let cur_centi = [m.spd, m.sta, m.brs, m.agi, m.luk]; // 厘点(写库基底,保留亚点进度)
     let cur = stats_of(m); // 点数(供衰减/费用/幸运档)
-    let reach = [m.pot_spd, m.pot_sta, m.pot_brs, m.pot_agi, m.pot_luk];
+    // 专属训练台抬该马自身 reach 上限(每级 +3/维,叠加后封顶 REACH_HARD_MAX=220 硬墙)。
+    let desk_bonus = (m.desk_lv as i32 * consts::DESK_REACH_PER_LV).max(0);
+    let reach =
+        [m.pot_spd, m.pot_sta, m.pot_brs, m.pot_agi, m.pot_luk].map(|r| (r + desk_bonus).min(consts::REACH_HARD_MAX));
     let growth = m.growth;
     let luk = cur[Stat::Luk.idx()];
     let eff = train_eff(life_ratio(m)); // 寿命见底削训练效率
@@ -525,14 +557,202 @@ pub async fn apply_train(
     Ok(TrainRoll { focus: (focus, to_pts(focus_centi)), spill: spill.map(|(s, g)| (s, to_pts(g))) })
 }
 
-/// 今日该马已比赛次数(业务日切换归零)。
-pub fn races_today(m: &horse::Model, today: NaiveDate) -> i64 {
-    if m.race_day == today { m.race_today as i64 } else { 0 }
+/// 今日账号已比赛次数(报名费日内递增的账号级口径,见 [`bump_account_races_today`];无行返 0)。读用。
+pub async fn account_races_today(db: &DatabaseConnection, uin: i64, today: NaiveDate) -> Result<i32> {
+    let row = player_daily::Entity::find_by_id((uin, today)).one(db).await.context("查账号当日场次")?;
+    Ok(row.map(|m| m.account_races_today).unwrap_or(0))
+}
+
+/// 原子推进账号级当日场次 +1(报名成功后调一次)。单语句 `INSERT … ON CONFLICT DO UPDATE SET cnt=cnt+1`:
+/// `(uin,day)` 复合主键天滚动、并发无丢更新——保证一账号全部马共享同一条日内递增曲线
+/// (否则 30 匹各从最便宜档重开、报名费 sink 随马数线性放大)。
+pub async fn bump_account_races_today(db: &DatabaseConnection, uin: i64, today: NaiveDate) -> Result<()> {
+    let am = player_daily::ActiveModel { uin: Set(uin), day: Set(today), account_races_today: Set(1) };
+    player_daily::Entity::insert(am)
+        .on_conflict(
+            OnConflict::columns([player_daily::Column::Uin, player_daily::Column::Day])
+                .value(
+                    player_daily::Column::AccountRacesToday,
+                    Expr::col(player_daily::Column::AccountRacesToday).add(1),
+                )
+                .to_owned(),
+        )
+        .exec(db)
+        .await
+        .context("推进账号当日场次")?;
+    Ok(())
 }
 
 /// 当前赛季键(`YYYY-MM`,业务日口径)。
 pub fn season_key() -> String {
     crate::data::util::business_day().format("%Y-%m").to_string()
+}
+
+/// 一匹马是否免厩养税:获取序 `acq_seq ≤ STABLE_TAX_FREE_N`(绝对口径、单调,退役不恢复=一次性新手保护)。
+/// `acq_seq=0` 视作未回填,从宽免税。
+pub fn tax_exempt(m: &horse::Model) -> bool {
+    m.acq_seq <= consts::STABLE_TAX_FREE_N
+}
+
+/// 惰性厩养税结算:玩家当日首次任意赛马交互时一并结(无后台定时,离线不空扣)。同一业务日第二次起直接返 0
+/// (`tax_settled_day == today`)。税基 = 在厩(`status != 2`)且非免税(`acq_seq > FREE_N`)的马按星级日税之和,
+/// 经马场减免(封顶 [`STABLE_TAX_REDUCTION_CAP`](consts::STABLE_TAX_REDUCTION_CAP));实扣 = `min(税, 余额)` 永不扣负。返回本次实扣金额。
+pub async fn settle_stable_tax(db: &DatabaseConnection, user: &mut crate::data::AUser) -> Result<i64> {
+    let uin = user.uin();
+    let today = crate::data::util::business_day();
+    let meta = player_meta::Entity::find_by_id(uin).one(db).await.context("查账号meta")?;
+    let settled = meta.as_ref().map(|m| m.tax_settled_day);
+    if settled == Some(today) {
+        return Ok(0); // 今日已结
+    }
+    let stable_lv = meta.as_ref().map(|m| m.stable_lv).unwrap_or(0);
+    let horses = stable(db, uin).await?;
+    let mut tax = 0i64;
+    for h in &horses {
+        if h.status != 2 && !tax_exempt(h) {
+            let r = (h.rarity.clamp(consts::RARITY_MIN, consts::RARITY_MAX) - 1) as usize;
+            tax += consts::STABLE_TAX_BY_RARITY[r];
+        }
+    }
+    // 马场等级减免,封顶。
+    let reduction = (stable_lv as f32 * consts::FAC_TAX_REDUCTION_PER_LV).min(consts::STABLE_TAX_REDUCTION_CAP);
+    let tax = (tax as f32 * (1.0 - reduction)).round() as i64;
+    // 原子锁行扣 min(税, 余额)、永不为负,返回实扣额:再用原子口径双保险,杜绝「读余额→pay」的 TOCTOU。
+    let deducted = if tax > 0 { user.deduct_floor(tax, "赛马·厩养税").await? } else { 0 };
+    set_tax_settled(db, uin, today).await?;
+    Ok(deducted)
+}
+
+// —— 设施投资 ——
+
+/// 设施造价:升到第 `lv` 级(从 `lv-1` 升上来)= round(base × ratio^(lv-1))。
+pub fn facility_cost(base: f64, ratio: f64, lv: i16) -> i64 {
+    (base * ratio.powi((lv - 1).max(0) as i32)).round() as i64
+}
+
+/// 读账号 meta(无则 None)。
+pub async fn player_meta_of(db: &DatabaseConnection, uin: i64) -> Result<Option<player_meta::Model>> {
+    player_meta::Entity::find_by_id(uin).one(db).await.context("查账号meta")
+}
+
+/// 某账号设施当前等级(无 meta 行 → 0)。
+pub fn account_facility_lv(meta: &Option<player_meta::Model>, f: consts::Facility) -> i16 {
+    use consts::Facility::*;
+    meta.as_ref()
+        .map(|m| match f {
+            TrainGround => m.train_lv,
+            Stable => m.stable_lv,
+            Bloodline => m.blood_lv,
+            Warehouse => m.warehouse_lv,
+        })
+        .unwrap_or(0)
+}
+
+/// 账号设施升级到 `new_lv`(upsert 对应列;调用方已扣费并校验上限)。
+pub async fn set_account_facility(db: &DatabaseConnection, uin: i64, f: consts::Facility, new_lv: i16) -> Result<()> {
+    use consts::Facility::*;
+    let mut am = player_meta::ActiveModel { uin: Set(uin), ..Default::default() };
+    let col = match f {
+        TrainGround => {
+            am.train_lv = Set(new_lv);
+            player_meta::Column::TrainLv
+        }
+        Stable => {
+            am.stable_lv = Set(new_lv);
+            player_meta::Column::StableLv
+        }
+        Bloodline => {
+            am.blood_lv = Set(new_lv);
+            player_meta::Column::BloodLv
+        }
+        Warehouse => {
+            am.warehouse_lv = Set(new_lv);
+            player_meta::Column::WarehouseLv
+        }
+    };
+    player_meta::Entity::insert(am)
+        .on_conflict(OnConflict::column(player_meta::Column::Uin).update_column(col).to_owned())
+        .exec(db)
+        .await
+        .context("写设施等级")?;
+    Ok(())
+}
+
+/// 设施降本折扣(0..0.40):训练场→训练费、马场→治疗费、血统→繁殖费。各栋每级 5%,封顶 -40%。
+pub fn train_cost_discount(meta: &Option<player_meta::Model>) -> f32 {
+    (account_facility_lv(meta, consts::Facility::TrainGround) as f32 * consts::FAC_TRAIN_DISCOUNT_PER_LV).min(0.40)
+}
+pub fn heal_cost_discount(meta: &Option<player_meta::Model>) -> f32 {
+    (account_facility_lv(meta, consts::Facility::Stable) as f32 * consts::FAC_HEAL_DISCOUNT_PER_LV).min(0.40)
+}
+pub fn breed_cost_discount(meta: &Option<player_meta::Model>) -> f32 {
+    (account_facility_lv(meta, consts::Facility::Bloodline) as f32 * consts::FAC_BREED_DISCOUNT_PER_LV).min(0.40)
+}
+
+/// 按降本折扣把费用打折(向下取整,至少 1)。
+pub fn apply_discount(cost: i64, discount: f32) -> i64 {
+    ((cost as f32 * (1.0 - discount)).floor() as i64).max(if cost > 0 { 1 } else { 0 })
+}
+
+/// 某马按马设施当前等级。
+pub fn horse_facility_lv(m: &horse::Model, f: consts::HorseFacility) -> i16 {
+    match f {
+        consts::HorseFacility::Desk => m.desk_lv,
+        consts::HorseFacility::Prep => m.prep_lv,
+    }
+}
+
+/// 该马是否已占一个珍爱槽(任一按马设施 > 0)。
+pub fn is_cherished(m: &horse::Model) -> bool {
+    m.desk_lv > 0 || m.prep_lv > 0
+}
+
+/// 名下已占用的珍爱槽数(被投资过的马,含退役)。
+pub async fn cherish_used(db: &DatabaseConnection, uin: i64) -> Result<usize> {
+    Ok(stable(db, uin).await?.iter().filter(|h| is_cherished(h)).count())
+}
+
+/// 珍爱槽上限(随马场等级,见 [`CHERISH_SLOTS_BY_STABLE_LV`](consts::CHERISH_SLOTS_BY_STABLE_LV))。
+pub fn cherish_cap(meta: &Option<player_meta::Model>) -> usize {
+    let lv = account_facility_lv(meta, consts::Facility::Stable).clamp(0, consts::FAC_STABLE_MAX_LV) as usize;
+    consts::CHERISH_SLOTS_BY_STABLE_LV[lv]
+}
+
+/// 升级某马的按马设施到 `new_lv`(原子写并同步 `m`;调用方已扣费、校验上限与珍爱槽)。
+pub async fn set_horse_facility(
+    db: &DatabaseConnection,
+    m: &mut horse::Model,
+    f: consts::HorseFacility,
+    new_lv: i16,
+) -> Result<()> {
+    let col = match f {
+        consts::HorseFacility::Desk => horse::Column::DeskLv,
+        consts::HorseFacility::Prep => horse::Column::PrepLv,
+    };
+    horse::Entity::update_many()
+        .col_expr(col, Expr::value(new_lv))
+        .filter(horse::Column::Id.eq(m.id))
+        .exec(db)
+        .await
+        .context("写按马设施等级")?;
+    match f {
+        consts::HorseFacility::Desk => m.desk_lv = new_lv,
+        consts::HorseFacility::Prep => m.prep_lv = new_lv,
+    }
+    Ok(())
+}
+
+/// 推进养税结算日(upsert `player_meta`;无行则建,其余列走库侧缺省)。
+async fn set_tax_settled(db: &DatabaseConnection, uin: i64, today: NaiveDate) -> Result<()> {
+    let am = player_meta::ActiveModel { uin: Set(uin), tax_settled_day: Set(today), ..Default::default() };
+    player_meta::Entity::insert(am)
+        .on_conflict(
+            OnConflict::column(player_meta::Column::Uin).update_column(player_meta::Column::TaxSettledDay).to_owned(),
+        )
+        .exec(db)
+        .await
+        .context("写养税结算日")?;
+    Ok(())
 }
 
 /// 原子领取「今日首胜」:今天该玩家还没有任何马夺过冠时,把夺冠马 `bonus_day` 置今天并返 `true`。
@@ -604,7 +824,7 @@ pub fn heal_cost(m: &horse::Model) -> i64 {
 }
 
 /// 立即治愈(清伤病)并落同等级伤痕(与自然到期一致:治好能上场,但留复发隐患),原子写并同步 `m`。
-/// **调用方须先扣费**。
+/// 调用方须先扣费。
 pub async fn heal(db: &DatabaseConnection, m: &mut horse::Model) -> Result<()> {
     let scar = m.injury;
     let scar_until = (scar > 0).then(|| {
@@ -642,7 +862,7 @@ pub async fn top_horses(db: &DatabaseConnection, limit: u64) -> Result<Vec<horse
         .context("查赛马榜")
 }
 
-/// 取**本赛季**胜场榜前 `limit` 匹马(只算当前赛季有胜的)。
+/// 取本赛季胜场榜前 `limit` 匹马(只算当前赛季有胜的)。
 pub async fn top_horses_season(db: &DatabaseConnection, limit: u64) -> Result<Vec<horse::Model>> {
     horse::Entity::find()
         .filter(horse::Column::SeasonKey.eq(season_key()))
@@ -723,7 +943,7 @@ pub async fn owner_label(db: &DatabaseConnection, uin: i64) -> Result<String> {
     Ok(format!("{name} #{}", u.id))
 }
 
-/// 喂基础草料:回饱食,原子写并同步 `m`。**调用方须先扣费**。
+/// 喂基础草料:回饱食,原子写并同步 `m`。调用方须先扣费。
 pub async fn feed_basic(db: &DatabaseConnection, m: &mut horse::Model) -> Result<()> {
     let new_sat = (m.satiety + consts::FORAGE_SATIETY).min(consts::VIT_MAX);
     horse::Entity::update_many()
@@ -737,7 +957,7 @@ pub async fn feed_basic(db: &DatabaseConnection, m: &mut horse::Model) -> Result
 }
 
 /// 护理回寿命:可回复上限永久 −`cap_cost`(不可逆),寿命回 `restore` 但封到新上限,原子写并同步 `m`。
-/// **调用方须先扣下护理道具**。
+/// 调用方须先扣下护理道具。
 pub async fn apply_restore(db: &DatabaseConnection, m: &mut horse::Model, restore: i32, cap_cost: i32) -> Result<()> {
     let new_cap = (m.lifespan_cap - cap_cost).max(0);
     let new_life = (m.lifespan + restore).min(new_cap);
@@ -753,7 +973,7 @@ pub async fn apply_restore(db: &DatabaseConnection, m: &mut horse::Model, restor
     Ok(())
 }
 
-/// 累加生涯投入(各花币养成点真埋点):原子 `invested += amount`,同步 `m`。
+/// 累加生涯投入:原子 `invested += amount`,同步 `m`。
 pub async fn add_invested(db: &DatabaseConnection, m: &mut horse::Model, amount: i64) -> Result<()> {
     horse::Entity::update_many()
         .col_expr(horse::Column::Invested, Expr::col(horse::Column::Invested).add(amount))
@@ -921,7 +1141,7 @@ pub async fn backpack(db: &DatabaseConnection, uin: i64) -> Result<Vec<(Item, i3
     Ok(rows.into_iter().filter_map(|(id, qty)| Item::from_global(id).map(|i| (i, qty))).collect())
 }
 
-/// 入袋 `n` 个道具,夹到堆叠上限;返回**溢出数**(没装下的,由调用方折算金币返还)。
+/// 入袋 `n` 个道具,夹到堆叠上限;返回溢出数(没装下的,由调用方折算金币返还)。
 pub async fn add_item(db: &DatabaseConnection, uin: i64, it: Item, n: i32) -> Result<i32> {
     crate::data::inventory::add_capped(db, uin, it.global_id(), n, consts::ITEM_STACK_CAP).await
 }
@@ -940,8 +1160,8 @@ pub enum Pull {
     Horse(Birth),
 }
 
-/// 赛后掉落(幸运产出维):按幸运掷掉落概率,命中则按品质档抽一件道具。`fortuitous` 幸运儿特性放大概率,
-/// `prob_scale` 场景乘子(PvE 1.0、PvP 减半)。未触发返 `None`。**调用方负责入袋**。
+/// 赛后掉落:按幸运掷掉落概率,命中则按品质档抽一件道具。`fortuitous` 幸运儿特性放大概率,
+/// `prob_scale` 场景乘子(PvE 1.0、PvP 减半)。未触发返 `None`。调用方负责入袋。
 pub fn roll_drop(luk: i32, fortuitous: bool, prob_scale: f64, rng: &mut StdRng) -> Option<Item> {
     let mut p = ((luk as f64 - consts::LUCK_DROP_FLOOR) / consts::LUCK_DROP_DIV).clamp(0.0, consts::LUCK_DROP_CAP);
     if fortuitous {
@@ -959,17 +1179,21 @@ pub fn roll_drop(luk: i32, fortuitous: bool, prob_scale: f64, rng: &mut StdRng) 
     Some(item)
 }
 
-/// 读抽卡保底计数(无则 0)。
-pub async fn gacha_pity(db: &DatabaseConnection, uin: i64) -> Result<i32> {
+/// 读抽卡保底计数(无则 0)。两池独立:`horse_pool` 决定读 `horse_pity` 还是 `std_pity`。
+pub async fn gacha_pity(db: &DatabaseConnection, uin: i64, horse_pool: bool) -> Result<i32> {
     let row = gacha::Entity::find_by_id(uin).one(db).await.context("查抽卡保底")?;
-    Ok(row.map(|m| m.pity).unwrap_or(0))
+    Ok(row.map(|m| if horse_pool { m.horse_pity } else { m.std_pity }).unwrap_or(0))
 }
 
-/// 落库抽卡保底计数(upsert)。
-pub async fn set_gacha_pity(db: &DatabaseConnection, uin: i64, pity: i32) -> Result<()> {
-    let am = gacha::ActiveModel { uin: Set(uin), pity: Set(pity) };
+/// 落库抽卡保底计数(upsert)。两池各写各列,互不影响对方计数。
+pub async fn set_gacha_pity(db: &DatabaseConnection, uin: i64, horse_pool: bool, pity: i32) -> Result<()> {
+    let (col, am) = if horse_pool {
+        (gacha::Column::HorsePity, gacha::ActiveModel { uin: Set(uin), horse_pity: Set(pity), ..Default::default() })
+    } else {
+        (gacha::Column::StdPity, gacha::ActiveModel { uin: Set(uin), std_pity: Set(pity), ..Default::default() })
+    };
     gacha::Entity::insert(am)
-        .on_conflict(OnConflict::column(gacha::Column::Uin).update_column(gacha::Column::Pity).to_owned())
+        .on_conflict(OnConflict::column(gacha::Column::Uin).update_column(col).to_owned())
         .exec(db)
         .await
         .context("写抽卡保底")?;
@@ -977,12 +1201,19 @@ pub async fn set_gacha_pity(db: &DatabaseConnection, uin: i64, pity: i32) -> Res
 }
 
 /// 抽一次(纯函数):按 `class_weights` 大类权重 `(道具,训练,恢复,珍材,马)` 出产物,出马星级用 `horse_rarity_weights`,
-/// 更新 `pity`。`pity` = 距上次 ★3+ 的累计抽数:到 [`GACHA_PITY`](consts::GACHA_PITY) 强制出 ★3+ 并清零;自然 ★3+ 也清零,
-/// 但自然出的 **★1/★2 马不清零**(否则保底永不触发)。软保底末段出马权重随距保底渐升。
-pub fn gacha_pull(pity: &mut i32, class_weights: &[u32; 5], horse_rarity_weights: &[u32; 4], rng: &mut StdRng) -> Pull {
+/// 更新 `pity`。`pity` = 距上次 ★3+ 的累计抽数:到 `pity_cap`(标准池 [`GACHA_PITY`](consts::GACHA_PITY)=30 /
+/// 马池 [`GACHA_HORSE_POOL_PITY`](consts::GACHA_HORSE_POOL_PITY)=25)强制出 ★3+ 并清零;自然 ★3+ 也清零,
+/// 但自然出的 ★1/★2 马不清零(否则保底永不触发)。软保底末段(`pity_cap - GACHA_SOFT_PITY` 之后的几抽)出马权重渐升。
+pub fn gacha_pull(
+    pity: &mut i32,
+    pity_cap: i32,
+    class_weights: &[u32; 5],
+    horse_rarity_weights: &[u32; 4],
+    rng: &mut StdRng,
+) -> Pull {
     let next = *pity + 1;
-    let force = next >= consts::GACHA_PITY;
-    let into_soft = next - (consts::GACHA_PITY - consts::GACHA_SOFT_PITY);
+    let force = next >= pity_cap;
+    let into_soft = next - (pity_cap - consts::GACHA_SOFT_PITY);
     let [w_race, w_train, w_recovery, w_treasure, w_horse_base] = *class_weights;
     let class = if force {
         4 // 保底:强制出 ★3+ 马
@@ -1019,7 +1250,7 @@ pub fn gacha_pull(pity: &mut i32, class_weights: &[u32; 5], horse_rarity_weights
 
 // 繁殖遗传
 
-/// 一匹马上溯 `depth` 代的祖先集合(**含自身**)。
+/// 一匹马上溯 `depth` 代的祖先集合(含自身)。
 pub async fn ancestor_set(db: &DatabaseConnection, id: i64, depth: u32) -> Result<HashSet<i64>> {
     let mut set = HashSet::new();
     set.insert(id);
@@ -1060,15 +1291,17 @@ pub struct BredChild {
     pub sex: i16,
 }
 
-/// 遗传纯函数(软基线回归模型):先定**星级**(决定子代 reach/growth 回归的基线),再每维取「偏向较优亲本」的中值、
-/// 向本星基线回归 + 噪声;`growth` 向**子代星均值**回归 + 噪声后 **.min(本星均值) 硬顶**(繁殖不超均值、不传递,
-/// 高 growth 只能靠抽卡/洗髓)。reach/growth 各自钳到合法区间。
+/// 遗传纯函数(软基线回归模型):先定星级(决定子代 reach/growth 回归的基线),再每维取「偏向较优亲本」的中值、
+/// 向本星基线回归 + 噪声。代数不进公式(不抬上限,只当血统标记):上限只看星级 + 抽卡/洗髓/珍材;好血统只提下限——
+/// 子代每维 reach 不低于 [`BREED_REACH_FLOOR`](consts::BREED_REACH_FLOOR)×较优亲本、growth 不低于 [`BREED_GROWTH_FLOOR`](consts::BREED_GROWTH_FLOOR)×较优亲本(growth 的下限
+/// 再夹到本星均值内,保持「不超均值、不传递」)。reach/growth 各自钳到合法区间(220/155 硬墙不变)。
 pub fn breed_child(f: &horse::Model, m: &horse::Model, incest: bool, star_stone: bool, rng: &mut StdRng) -> BredChild {
     let freach = [f.pot_spd, f.pot_sta, f.pot_brs, f.pot_agi, f.pot_luk];
     let mreach = [m.pot_spd, m.pot_sta, m.pot_brs, m.pot_agi, m.pot_luk];
     let rarity = breed_rarity(f.rarity, m.rarity, incest, star_stone, rng);
+    let generation = f.generation.max(m.generation) + 1;
     let star_idx = (rarity.clamp(consts::RARITY_MIN, consts::RARITY_MAX) - 1) as usize;
-    let baseline = consts::REACH_BASELINE[star_idx] as f32;
+    let baseline = consts::REACH_BASELINE[star_idx] as f32; // 只看星级,代数不抬基线
     let reach: [i32; consts::STAT_COUNT] = std::array::from_fn(|i| {
         let (lo, hi) = (freach[i].min(mreach[i]) as f32, freach[i].max(mreach[i]) as f32);
         // 偏向较优亲本(可定向选育),留方差 → 也可能落到较差亲本的该维。
@@ -1076,21 +1309,25 @@ pub fn breed_child(f: &horse::Model, m: &horse::Model, incest: bool, star_stone:
         let mid = lo + w * (hi - lo);
         // 向本星基线回归(低于→正向填充、高于→往回拉)+ 噪声(可负 → 有概率更烂)。
         let drift = consts::BREED_REACH_REVERT * (baseline - mid) + gauss(0.0, consts::BREED_REACH_NOISE, rng);
-        (mid + drift).round().clamp(consts::REACH_MIN as f32, consts::REACH_HARD_MAX as f32) as i32
+        // 好血统保底:不低于 FLOOR×较优亲本(hi)。FLOOR<1,故只托底、不抬过亲本/220 硬墙。
+        let floor = consts::BREED_REACH_FLOOR * hi;
+        (mid + drift).max(floor).round().clamp(consts::REACH_MIN as f32, consts::REACH_HARD_MAX as f32) as i32
     });
-    // growth 向子代星均值回归 + 噪声,再硬顶到本星均值(繁殖只填到均值、不超、不传递)。
+    // growth 向本星均值回归 + 噪声,.min(target) 硬顶(不超均值、不传递);好血统给个下限(夹到 target 内,不破硬顶)。
     let parent_mean = (f.growth + m.growth) as f32 / 2.0;
-    let target = consts::GROWTH_MEAN[star_idx];
+    let target = consts::GROWTH_MEAN[star_idx]; // 只看星级,代数不抬
+    let g_floor = (consts::BREED_GROWTH_FLOOR * f.growth.max(m.growth) as f32).min(target);
     let growth = (parent_mean
         + consts::GROWTH_BREED_REVERT * (target - parent_mean)
         + gauss(0.0, consts::GROWTH_BREED_NOISE, rng))
     .min(target)
+    .max(g_floor)
     .round()
     .clamp(consts::GROWTH_MIN as f32, consts::GROWTH_MAX as f32) as i32;
     let traits = breed_traits(f.traits, m.traits, rng);
     BredChild {
         birth: Birth { rarity, cur: birth_cur(&reach), reach, growth, traits },
-        generation: f.generation.max(m.generation) + 1,
+        generation,
         color: if rng.random_bool(0.5) { f.color } else { m.color },
         sex: rng.random_range(0..2) as i16,
     }
@@ -1121,12 +1358,12 @@ fn breed_rarity(rf: i16, rm: i16, incest: bool, star_stone: bool, rng: &mut StdR
     (base + delta).clamp(consts::RARITY_MIN, consts::RARITY_MAX)
 }
 
-/// 子代特性遗传:把父母特性**合并**后,每条按 [`TRAIT_INHERIT_PROB`](consts::TRAIT_INHERIT_PROB) 遗传(双亲
+/// 子代特性遗传:把父母特性合并后,每条按 [`TRAIT_INHERIT_PROB`](consts::TRAIT_INHERIT_PROB) 遗传(双亲
 /// 共有的也只掷一次),另有 [`TRAIT_MUTATE_PROB`](consts::TRAIT_MUTATE_PROB) 概率变异出一条全新特性;总数封顶
 /// [`TRAIT_MAX`](consts::TRAIT_MAX)。
 fn breed_traits(f_traits: i32, m_traits: i32, rng: &mut StdRng) -> i32 {
     let parent_mask = f_traits | m_traits;
-    // 合并后**打乱顺序**再逐条遗传,避免按 bit 顺序贪心使低位特性系统性优先。
+    // 合并后打乱顺序再逐条遗传,避免按 bit 顺序贪心使低位特性系统性优先。
     let mut cands: Vec<Trait> = Trait::ALL.into_iter().filter(|t| t.in_mask(parent_mask)).collect();
     for i in (1..cands.len()).rev() {
         cands.swap(i, rng.random_range(0..=i));
@@ -1207,7 +1444,7 @@ pub async fn earned_achievements(db: &DatabaseConnection, uin: i64) -> Result<Ha
 }
 
 /// 评估并发放新达成的成就:扫描全马 → 比对已达成 → 把新达成的入库(幂等)→ 返回新达成列表。
-/// **不发金币**(由 [`mod`](super) 经 `AUser` 发)。
+/// 不发金币(由 [`mod`](super) 经 `AUser` 发)。
 pub async fn evaluate_and_grant(db: &DatabaseConnection, uin: i64) -> Result<Vec<Achievement>> {
     let earned = earned_achievements(db, uin).await?;
     let horses = stable(db, uin).await?;
@@ -1216,7 +1453,7 @@ pub async fn evaluate_and_grant(db: &DatabaseConnection, uin: i64) -> Result<Vec
     for a in Achievement::ALL {
         if !earned.contains(&a.code()) && qualifies(a, &d) {
             let am = achievement::ActiveModel { uin: Set(uin), code: Set(a.code()), earned_at: NotSet };
-            // 幂等且**只在真正插入了新行时**才算新达成:并发/连点下撞主键的那一方 affected=0、不入列、不发币。
+            // 幂等且只在真正插入了新行时才算新达成:并发/连点下撞主键的那一方 affected=0、不入列、不发币。
             let affected = achievement::Entity::insert(am)
                 .on_conflict(
                     OnConflict::columns([achievement::Column::Uin, achievement::Column::Code]).do_nothing().to_owned(),
@@ -1265,10 +1502,99 @@ pub async fn bump_breed_count(db: &DatabaseConnection, id: i64) -> Result<()> {
     Ok(())
 }
 
+// —— 血统库(退役种马存库,不占在厩格)——
+
+/// 血统库里的种马(载入 horse 模型;库小、逐个取)。
+pub async fn lib_studs(db: &DatabaseConnection, uin: i64) -> Result<Vec<horse::Model>> {
+    let rows =
+        bloodline_lib::Entity::find().filter(bloodline_lib::Column::Uin.eq(uin)).all(db).await.context("查血统库")?;
+    let mut out = Vec::new();
+    for r in rows {
+        if let Some(h) = get_horse(db, r.horse_id).await? {
+            out.push(h);
+        }
+    }
+    Ok(out)
+}
+
+/// 血统库当前成员数。
+pub async fn lib_count(db: &DatabaseConnection, uin: i64) -> Result<usize> {
+    Ok(bloodline_lib::Entity::find()
+        .filter(bloodline_lib::Column::Uin.eq(uin))
+        .all(db)
+        .await
+        .context("数血统库")?
+        .len())
+}
+
+/// 某马是否在该账号的血统库里(作种马)。
+pub async fn is_in_lib(db: &DatabaseConnection, uin: i64, horse_id: i64) -> Result<bool> {
+    Ok(bloodline_lib::Entity::find_by_id((uin, horse_id)).one(db).await.context("查血统库成员")?.is_some())
+}
+
+/// 把一匹马存入血统库作种马:退役(status=2,不占在厩格)+ 入库行。两写同事务(全成或全不成,
+/// 不留「退役了却没入库」的半成品)。调用方在本调用成功后再扣费(余额先校验),确认放弃退役回馈。
+pub async fn deposit_to_lib(db: &DatabaseConnection, m: &mut horse::Model) -> Result<()> {
+    let txn = db.begin().await.context("开启存种事务")?;
+    horse::Entity::update_many()
+        .col_expr(horse::Column::Status, Expr::value(2))
+        .filter(horse::Column::Id.eq(m.id))
+        .exec(&txn)
+        .await
+        .context("退役入库马")?;
+    bloodline_lib::ActiveModel { uin: Set(m.owner_uin), horse_id: Set(m.id), at: NotSet }
+        .insert(&txn)
+        .await
+        .context("入血统库")?;
+    txn.commit().await.context("提交存种")?;
+    m.status = 2;
+    Ok(())
+}
+
+// —— PvP 段位(ELO)——
+
+/// 给一匹马的 PvP 段位分加 `delta` 并 +1 场(原子写 + 同步 `m`;分数下界 100 防穿底)。
+pub async fn bump_horse_elo(db: &DatabaseConnection, m: &mut horse::Model, delta: i32) -> Result<()> {
+    let new = (m.elo + delta).max(100);
+    horse::Entity::update_many()
+        .col_expr(horse::Column::Elo, Expr::value(new))
+        .col_expr(horse::Column::EloGames, Expr::col(horse::Column::EloGames).add(1))
+        .filter(horse::Column::Id.eq(m.id))
+        .exec(db)
+        .await
+        .context("写马段位")?;
+    m.elo = new;
+    m.elo_games += 1;
+    Ok(())
+}
+
+/// 给一个马主的段位分(纯荣誉)加 `delta` 并 +1 场(upsert `player_meta`)。PvP 结算串行,读-改-写够用。
+pub async fn bump_owner_elo(db: &DatabaseConnection, uin: i64, delta: i32) -> Result<()> {
+    let meta = player_meta_of(db, uin).await?;
+    let (elo, games) = meta.as_ref().map(|m| (m.owner_elo, m.owner_elo_games)).unwrap_or((consts::ELO_INIT, 0));
+    let new = (elo + delta).max(100);
+    let am = player_meta::ActiveModel {
+        uin: Set(uin),
+        owner_elo: Set(new),
+        owner_elo_games: Set(games + 1),
+        ..Default::default()
+    };
+    player_meta::Entity::insert(am)
+        .on_conflict(
+            OnConflict::column(player_meta::Column::Uin)
+                .update_columns([player_meta::Column::OwnerElo, player_meta::Column::OwnerEloGames])
+                .to_owned(),
+        )
+        .exec(db)
+        .await
+        .context("写马主段位")?;
+    Ok(())
+}
+
 // 退役 / 改名
 
-/// 退役回馈金币:地板 [`RETIRE_REWARD_BASE`](consts::RETIRE_REWARD_BASE) + 生涯累计投入(invested)的
-/// [`RETIRE_INVEST_PCT`](consts::RETIRE_INVEST_PCT)。养得多回得多,但比例远低于 1,退役只是腾格 + 部分回血。
+/// 退役回馈金币:地板 [`RETIRE_REWARD_BASE`](consts::RETIRE_REWARD_BASE) + 生涯累计投入 invested 的
+/// [`RETIRE_INVEST_PCT`](consts::RETIRE_INVEST_PCT)(比例远低于 1,退役只部分回血)。
 pub fn retire_reward(m: &horse::Model) -> i64 {
     consts::RETIRE_REWARD_BASE + (m.invested as f64 * consts::RETIRE_INVEST_PCT).round() as i64
 }
@@ -1404,6 +1730,11 @@ mod tests {
             season_wins: 0,
             invested: 0,
             train_total: 0,
+            acq_seq: 10,
+            elo: consts::ELO_INIT,
+            elo_games: 0,
+            desk_lv: 0,
+            prep_lv: 0,
             father_id: None,
             mother_id: None,
             created_at: t,
